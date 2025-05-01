@@ -198,3 +198,20 @@ pyrightconfig.json
 
 # ruff Python linter
 .ruff_cache/
+
+# Ignore the entire results directory
+/results/
+
+# Ignore common model checkpoint extensions anywhere
+*.pt
+*.pth
+*.h5
+
+# Ignore result files anywhere
+*.json
+*.yaml
+*.yml
+
+# Ignore all wandb run folders
+**/wandb/
+/experiments/results/
