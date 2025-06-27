@@ -1,4 +1,11 @@
 """my-awesome-app: A Flower / PyTorch app."""
+import warnings
+
+warnings.filterwarnings(
+    "ignore",
+    category=DeprecationWarning,
+    message=r".*co_lnotab is deprecated.*",
+)
 
 import json
 from typing import List, Tuple
