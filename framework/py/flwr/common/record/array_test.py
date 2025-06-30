@@ -25,7 +25,10 @@ from unittest.mock import Mock
 import numpy as np
 from parameterized import parameterized
 
+from flwr.common.serde import array_to_proto
+
 from ..constant import SType
+from ..inflatable import get_object_body, get_object_type_from_object_content
 from ..typing import NDArray
 from .array import Array
 
@@ -73,7 +76,7 @@ class TestArray(unittest.TestCase):
         # Execute
         array_instance = Array(
             dtype=str(original_array.dtype),
-            shape=list(original_array.shape),
+            shape=tuple(original_array.shape),
             stype=SType.NUMPY,
             data=buffer,
         )
@@ -87,7 +90,7 @@ class TestArray(unittest.TestCase):
         # Prepare
         array_instance = Array(
             dtype="float32",
-            shape=[3],
+            shape=(3,),
             stype="invalid_stype",  # Non-numpy stype
             data=b"",
         )
@@ -108,7 +111,7 @@ class TestArray(unittest.TestCase):
 
         # Assert
         self.assertEqual(array_instance.dtype, str(original_array.dtype))
-        self.assertEqual(array_instance.shape, list(original_array.shape))
+        self.assertEqual(array_instance.shape, tuple(original_array.shape))
         self.assertEqual(array_instance.stype, SType.NUMPY)
         np.testing.assert_array_equal(deserialized_array, original_array)
 
@@ -127,14 +130,14 @@ class TestArray(unittest.TestCase):
 
         # Assert
         self.assertEqual(arr.dtype, "float32")
-        self.assertEqual(arr.shape, [2, 2])
+        self.assertEqual(arr.shape, (2, 2))
         self.assertEqual(arr.stype, SType.NUMPY)
 
     @parameterized.expand(  # type: ignore
         [
             ({"torch_tensor": MOCK_TORCH_TENSOR},),
             ({"ndarray": np.array([1, 2, 3])},),
-            ({"dtype": "float32", "shape": [2, 2], "stype": "dense", "data": b"data"},),
+            ({"dtype": "float32", "shape": (2, 2), "stype": "dense", "data": b"data"},),
         ]
     )
     def test_valid_init_overloads_kwargs(self, kwargs: dict[str, Any]) -> None:
@@ -146,7 +149,7 @@ class TestArray(unittest.TestCase):
         [
             (MOCK_TORCH_TENSOR,),
             (np.array([1, 2, 3]),),
-            ("float32", [2, 2], "dense", b"data"),
+            ("float32", (2, 2), "dense", b"data"),
         ]
     )
     def test_valid_init_overloads_args(self, *args: Any) -> None:
@@ -157,8 +160,8 @@ class TestArray(unittest.TestCase):
     @parameterized.expand(  # type: ignore
         [
             (MOCK_TORCH_TENSOR, np.array([1])),
-            ("float32", [2, 2], "dense", 213),
-            ([2, 2], "dense", b"data"),
+            ("float32", (2, 2), "dense", 213),
+            ((2, 2), "dense", b"data"),
             (123, "invalid"),
         ]
     )
@@ -166,3 +169,30 @@ class TestArray(unittest.TestCase):
         """Ensure invalid combinations raise TypeError."""
         with self.assertRaises(TypeError):
             Array(*args)
+
+    def test_deflate_and_inflate(self) -> None:
+        """Ensure an Array can be (de)inflated correctly."""
+        arr = Array(np.random.randn(5, 5))
+
+        # Assert
+        # Array has no children
+        assert arr.children is None
+
+        arr_b = arr.deflate()
+
+        # Assert
+        # Class name matches
+        assert get_object_type_from_object_content(arr_b) == arr.__class__.__qualname__
+        # Body of deflfated Array matches its direct protobuf serialization
+        assert get_object_body(arr_b, Array) == array_to_proto(arr).SerializeToString()
+
+        # Inflate
+        arr_ = Array.inflate(arr_b)
+
+        # Assert
+        # Both objects are identical
+        assert arr.object_id == arr_.object_id
+
+        # Assert
+        # Inflate passing children raises ValueError
+        self.assertRaises(ValueError, Array.inflate, arr_b, children={"123": arr})

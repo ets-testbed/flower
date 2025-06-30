@@ -38,6 +38,7 @@ from flwr.common.constant import (
     SubStatus,
 )
 from flwr.common.exit import ExitCode, flwr_exit
+from flwr.common.heartbeat import HeartbeatSender, get_grpc_app_heartbeat_fn
 from flwr.common.logger import (
     log,
     mirror_output_to_queue,
@@ -106,20 +107,23 @@ def run_serverapp(  # pylint: disable=R0914, disable=W0212, disable=R0915
     certificates: Optional[bytes] = None,
 ) -> None:
     """Run Flower ServerApp process."""
-    grid = GrpcGrid(
-        serverappio_service_address=serverappio_api_address,
-        root_certificates=certificates,
-    )
-
     # Resolve directory where FABs are installed
     flwr_dir_ = get_flwr_dir(flwr_dir)
     log_uploader = None
     success = True
     hash_run_id = None
     run_status = None
+    heartbeat_sender = None
+    grid = None
     while True:
 
         try:
+            # Initialize the GrpcGrid
+            grid = GrpcGrid(
+                serverappio_service_address=serverappio_api_address,
+                root_certificates=certificates,
+            )
+
             # Pull ServerAppInputs from LinkState
             req = PullServerAppInputsRequest()
             log(DEBUG, "[flwr-serverapp] Pull ServerAppInputs")
@@ -182,6 +186,16 @@ def run_serverapp(  # pylint: disable=R0914, disable=W0212, disable=R0915
                 event_details={"run-id-hash": hash_run_id},
             )
 
+            # Set up heartbeat sender
+            heartbeat_fn = get_grpc_app_heartbeat_fn(
+                grid._stub,
+                run.run_id,
+                failure_message="Heartbeat failed unexpectedly. The SuperLink could "
+                "not find the provided run ID, or the run status is invalid.",
+            )
+            heartbeat_sender = HeartbeatSender(heartbeat_fn)
+            heartbeat_sender.start()
+
             # Load and run the ServerApp with the Grid
             updated_context = run_(
                 grid=grid,
@@ -213,19 +227,29 @@ def run_serverapp(  # pylint: disable=R0914, disable=W0212, disable=R0915
             success = False
 
         finally:
+            # Stop heartbeat sender
+            if heartbeat_sender:
+                heartbeat_sender.stop()
+                heartbeat_sender = None
+
             # Stop log uploader for this run and upload final logs
             if log_uploader:
                 stop_log_uploader(log_queue, log_uploader)
                 log_uploader = None
 
             # Update run status
-            if run_status:
+            if run_status and grid:
                 run_status_proto = run_status_to_proto(run_status)
                 grid._stub.UpdateRunStatus(
                     UpdateRunStatusRequest(
                         run_id=run.run_id, run_status=run_status_proto
                     )
                 )
+
+            # Close the Grpc connection
+            if grid:
+                grid.close()
+
             event(
                 EventType.FLWR_SERVERAPP_RUN_LEAVE,
                 event_details={"run-id-hash": hash_run_id, "success": success},
