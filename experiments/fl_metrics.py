@@ -23,7 +23,6 @@ import time
 from sklearn.metrics import precision_score, recall_score, f1_score
 from torch.utils.data import DataLoader
 
-import flwr
 from flwr.client import Client, ClientApp, NumPyClient
 from flwr.server import ServerApp, ServerConfig, ServerAppComponents
 from flwr.server.strategy import FedAvg
