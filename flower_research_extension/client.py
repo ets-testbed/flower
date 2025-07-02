@@ -3,7 +3,7 @@ from flwr.client import NumPyClient
 from flwr.common import Context
 
 from flower_research_extension.model import Net, get_parameters, set_parameters
-from flower_research_extension.data.cifar10 import load_cifar10_partition
+from flower_research_extension.data_files.cifar10 import load_cifar10_partition
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 

@@ -1,7 +1,7 @@
 import torch
 from typing import Dict, Tuple
 from flower_research_extension.model import Net, set_parameters
-from flower_research_extension.data.cifar10 import load_cifar10_partition
+from flower_research_extension.data_files.cifar10 import load_cifar10_partition
 
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
