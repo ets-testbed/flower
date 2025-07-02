@@ -215,3 +215,4 @@ pyrightconfig.json
 # Ignore all wandb run folders
 **/wandb/
 /experiments/results/
+/flower_research_extension/experiments/results/

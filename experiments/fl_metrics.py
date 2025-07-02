@@ -36,13 +36,15 @@ from flwr.server.client_proxy import ClientProxy
 
 # ─── Device & Global Constants ────────────────────────────────────────────────
 DEVICE = torch.device("cuda")  # Try "cuda" to train on GPU
-NUM_PARTITIONS = 100  # Number of federated clients
+NUM_PARTITIONS = 20  # Number of federated clients
 BATCH_SIZE = 32  # Mini-batch size per client
-NUM_ROUNDS = 100
+NUM_ROUNDS = 5
+
+# Outside the round loop: persistent dictionary to hold latest metrics per client
+latest_client_metrics = {}
 
 # Diagnostics
 print(f"Training on {DEVICE}")
-print(f"Flower {flwr.__version__} / PyTorch {torch.__version__}")
 
 
 # ─── Data Loading Utility ─────────────────────────────────────────────────────
@@ -298,18 +300,31 @@ class CustomFedAvg(FedAvg):
 
         # 3. Build a table of per-client metrics
         import wandb
-        rows = []
+
+        # Inside the round loop:
         for client_proxy, fit_res in results:
-            rows.append({
+            client_id = client_proxy.cid
+            latest_client_metrics[client_id] = {
                 "round": server_round,
-                "client_id": client_proxy.cid,
+                "client_id": client_id,
                 "num_examples": fit_res.num_examples,
-                **fit_res.metrics,
-            })
-        client_table = wandb.Table(
-            data=rows,
-            columns=sorted(rows[0].keys()) if rows else ["round", "client_id", "num_examples"]
-        )
+                **fit_res.metrics,  # e.g., "accuracy", "loss"
+            }
+
+        # After updating, generate a list from the dictionary values
+        rows = list(latest_client_metrics.values())
+        rows.sort(key=lambda r: r["round"], reverse=False)  # or reverse=False for ascending
+
+        # Dynamically extract columns
+
+        columns = sorted(rows[0].keys()) if rows else ["round", "client_id", "num_examples"]
+
+        # Convert to list-of-lists for wandb.Table
+        data = [[row[col] for col in columns] for row in rows]
+
+        # Log the table (can overwrite, since it's always the latest snapshot)
+        client_table = wandb.Table(data=data, columns=columns)
+        wandb.log({"latest_client_metrics": client_table})
 
         # ─── CLIENT ACCURACY SPREAD ───────────────────────────────────
         client_accs = [r["accuracy"] for r in rows if "accuracy" in r]
@@ -332,7 +347,7 @@ class CustomFedAvg(FedAvg):
         # 4. Log **one** entry per round: global + client table
         wandb.log({
             # basic
-            "round": server_round,
+            # "round": server_round,
             "global_loss": metrics_aggregated.get("loss"),
             "global_accuracy": metrics_aggregated.get("accuracy"),
 
@@ -348,8 +363,8 @@ class CustomFedAvg(FedAvg):
             "clients/succeeded": num_successful,
             "clients/failed": num_failed,
 
-            # always log this table last
-            "client_metrics": client_table,
+            # # always log this table last
+            # "client_metrics": client_table,
         })
 
         return parameters_aggregated, metrics_aggregated
