@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# hyperparam_runs.sh
 
 # Path to the Python interpreter in your virtual environment
 # Go to the root of the project

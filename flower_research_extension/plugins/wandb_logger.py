@@ -28,10 +28,6 @@ class WandBLogger(MetricsPlugin):
             resume=False
         )
 
-    # def on_client_result(self, round_num: int, client_id: str, metrics: Dict):
-    #     if metrics:
-    #         metrics = {f"round/{round_num}/{k}": v for k, v in metrics.items()}
-    #         wandb.log(metrics)
 
     def on_round_end(self, round_num: int, aggregated_metrics: Dict):
         # Only log fit/training metrics here if needed

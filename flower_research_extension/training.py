@@ -1,8 +1,11 @@
 import torch
-from typing import Dict, Tuple
-from flower_research_extension.model import Net, set_parameters
-from flower_research_extension.data_files.cifar10 import load_cifar10_partition
 
+from flower_research_extension.data_files.cifar10 import load_cifar10_partition
+from flower_research_extension.model import Net, set_parameters
+from typing import Dict, Tuple
+
+from sklearn.metrics import precision_score, recall_score, f1_score
+import numpy as np
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 NUM_PARTITIONS = 20
@@ -15,13 +18,7 @@ def fit_config(server_round: int) -> Dict:
     }
 
 
-from typing import Dict, Tuple
-from sklearn.metrics import precision_score, recall_score, f1_score
-
-from sklearn.metrics import precision_score, recall_score, f1_score
-import numpy as np
-
-def evaluate(server_round: int, parameters, config: Dict, device=DEVICE) -> Tuple[float, Dict]:
+def evaluate(parameters, device=DEVICE) -> Tuple[float, Dict]:
     model = Net().to(device)
     set_parameters(model, parameters)
     _, testloader = load_cifar10_partition(0, NUM_PARTITIONS)
@@ -61,9 +58,3 @@ def evaluate(server_round: int, parameters, config: Dict, device=DEVICE) -> Tupl
         "recall": float(recall),
         "f1": float(f1)
     }
-
-
-
-
-
-

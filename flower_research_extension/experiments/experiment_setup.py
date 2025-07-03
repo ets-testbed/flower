@@ -77,7 +77,7 @@ def build_experiment(args):
         min_evaluate_clients=args.min_evaluate_clients,
         min_available_clients=args.num_partitions,
         initial_parameters=init_params,
-        evaluate_fn=lambda r, p, c={}: evaluate(r, p, c, device=device),
+        evaluate_fn=lambda r, p, c={}: evaluate(p, device=device),
         on_fit_config_fn=fit_config,
         fit_metrics_aggregation_fn=aggregate_fit_metrics,
         evaluate_metrics_aggregation_fn=aggregate_evaluate_metrics,
@@ -102,7 +102,7 @@ def build_experiment(args):
     return client_app, server_app, plugins, backend
 
 
-# ─── Convenience Runner ───────────────────────────────────────────────────────
+# ─── Runner ───────────────────────────────────────────────────────
 def run_experiment(args):
     client_app, server_app, plugins, backend = build_experiment(args)
     run_simulation(

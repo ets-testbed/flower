@@ -1,10 +1,9 @@
-# flower_research_extension/data.py
-
 import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
 from flwr_datasets import FederatedDataset
 
 from datasets import logging as hf_logging
+
 hf_logging.set_verbosity_error()
 
 BATCH_SIZE = 32

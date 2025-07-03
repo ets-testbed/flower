@@ -5,8 +5,10 @@ setup(
     version="0.1",
     packages=find_packages(),
     install_requires=[
-        "flwr>=1.5.0",  # match your Flower version
+        "flwr[simulation]>=1.5.0",  # includes simulation dependencies
         "wandb",
+        "scikit-learn",
     ],
 )
-# pip install -e .
+
+# torch linux: pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
