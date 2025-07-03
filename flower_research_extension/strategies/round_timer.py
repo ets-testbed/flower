@@ -29,7 +29,6 @@ class RoundTimerStrategy(Strategy):
     def evaluate(self, server_round, parameters):
         return self.base_strategy.evaluate(server_round, parameters)
 
-    # ✅ CUSTOM AGGREGATION WITH TIMING
     def aggregate_fit(
         self,
         server_round: int,
@@ -42,8 +41,5 @@ class RoundTimerStrategy(Strategy):
         duration = time.time() - start_time
 
         aggregated_metrics["round_time"] = duration
-
-        for plugin in self.plugins:
-            plugin.on_round_end(server_round, aggregated_metrics)
 
         return aggregated_params, aggregated_metrics

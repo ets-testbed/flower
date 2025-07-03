@@ -10,6 +10,7 @@ class HookedStrategy(Strategy):
     def __init__(self, base_strategy: Strategy, plugins: Optional[List[MetricsPlugin]] = None):
         self.base_strategy = base_strategy
         self.plugins = plugins or []
+        self.client_metrics_history = []
 
     # Mandatory: delegate abstract methods
     def initialize_parameters(self, client_manager):
@@ -33,8 +34,9 @@ class HookedStrategy(Strategy):
         aggregated_params, aggregated_metrics = self.base_strategy.aggregate_fit(server_round, results, failures)
 
         for proxy, fit_res in results:
+            client_id = proxy.cid
             for plugin in self.plugins:
-                plugin.on_client_result(server_round, proxy.cid, fit_res.metrics)
+                plugin.on_client_result(server_round, client_id, fit_res.metrics)
 
         for proxy, exc in failures:
             for plugin in self.plugins:

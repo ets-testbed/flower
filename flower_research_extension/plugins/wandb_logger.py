@@ -15,41 +15,36 @@ class WandBLogger(MetricsPlugin):
     """
 
     def __init__(self, exp_dir: str = "results/wandb", project: str = "flower-research", run_name: str = None):
-        self.latest_client_metrics = {}
-
         # Create output directory
         Path(exp_dir).mkdir(parents=True, exist_ok=True)
 
         # Init W&B run
         wandb.init(
             project=project,
+            reinit=True,
             name=run_name,
             dir=exp_dir,
             job_type="server",
+            resume=False
         )
 
-    def on_client_result(self, round_num: int, client_id: str, metrics: Dict):
-        self.latest_client_metrics[client_id] = {"round": round_num, "client_id": client_id, **metrics}
+    # def on_client_result(self, round_num: int, client_id: str, metrics: Dict):
+    #     if metrics:
+    #         metrics = {f"round/{round_num}/{k}": v for k, v in metrics.items()}
+    #         wandb.log(metrics)
 
     def on_round_end(self, round_num: int, aggregated_metrics: Dict):
-        # Log global metrics
-        wandb.log({
-            "round": round_num,
-            **aggregated_metrics
-        })
-
-        # Log client metrics as a table
-        rows = list(self.latest_client_metrics.values())
-        if rows:
-            columns = sorted(rows[0].keys())
-            data = [[row[col] for col in columns] for row in rows]
-            table = wandb.Table(data=data, columns=columns)
-            wandb.log({"client_metrics_table": table})
-
-        self.latest_client_metrics.clear()
+        # Only log fit/training metrics here if needed
+        fit_metrics = {k: v for k, v in aggregated_metrics.items() if k.startswith("fit/")}
+        if fit_metrics:
+            wandb.log({"round": round_num, **fit_metrics})
 
     def on_server_evaluate(self, round_num: int, metrics: Dict):
-        wandb.log({"round": round_num, **metrics})
+        if metrics:
+            wandb.log({
+                "round": round_num,
+                **{f"{k}": v for k, v in metrics.items()}
+            })
 
     def on_client_failure(self, round_num: int, client_id: str, error: Exception):
         wandb.log({

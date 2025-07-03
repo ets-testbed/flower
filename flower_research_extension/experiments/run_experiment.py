@@ -1,81 +1,24 @@
-from flwr.simulation import run_simulation
-from flwr.server import ServerApp, ServerConfig, ServerAppComponents
-from flwr.client import ClientApp
-from flwr.common import ndarrays_to_parameters, Context
+import argparse
 
-from flower_research_extension.strategies.hooked_strategy import HookedStrategy
-from flower_research_extension.strategies.round_timer import RoundTimerStrategy
-from flower_research_extension.plugins.wandb_logger import WandBLogger
-from flower_research_extension.plugins.csv_logger import CSVLogger
+from flower_research_extension.experiments.experiment_setup import run_experiment
 
-from flower_research_extension.model import Net, get_parameters
-from flower_research_extension.client import client_fn
-from flower_research_extension.training import evaluate, fit_config
-
-import torch
-
-# ─── Constants ────────────────────────────────────────────────────────────────
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-NUM_PARTITIONS = 20
-NUM_ROUNDS = 5
-INITIAL_PARAMETERS = ndarrays_to_parameters(get_parameters(Net()))
-
-# ─── Client App ───────────────────────────────────────────────────────────────
-client_app = ClientApp(client_fn=client_fn)
-
-# ─── Plugins ──────────────────────────────────────────────────────────────────
-wandb_logger = WandBLogger(
-    exp_dir="results/wandb",
-    project="flower-federated",
-    run_name="cifar10_fedavg"
+# ─── Argument Parser ─────────────────────────────────────────────────────────
+parser = argparse.ArgumentParser(
+    description="Run a Flower federated learning experiment with configurable parameters."
 )
+parser.add_argument("--num_rounds", type=int, default=100, help="Total number of federated rounds")
+parser.add_argument("--num_partitions", type=int, default=20, help="Number of simulated clients")
+parser.add_argument("--fraction_fit", type=float, default=0.25, help="Fraction of clients used for training each round")
+parser.add_argument("--min_fit_clients", type=int, default=3, help="Minimum number of clients to sample for training")
+parser.add_argument("--min_evaluate_clients", type=int, default=3,
+                    help="Minimum number of clients to sample for evaluation")
+parser.add_argument("--client_cpu", type=int, default=2, help="Number of CPUs per client for simulation backend")
+parser.add_argument("--client_gpu", type=float, default=0.01,
+                    help="Fraction of one GPU per client for simulation backend")
+parser.add_argument("--csv_log_dir", type=str, default="results/logs", help="Directory for CSV logs")
+parser.add_argument("--wandb_dir", type=str, default="results/wandb", help="Directory for Weights & Biases logs")
+parser.add_argument("--wandb_project", type=str, default="flower-federated", help="Weights & Biases project name")
+parser.add_argument("--wandb_run_name", type=str, default="cifar10_fedavg", help="Weights & Biases run name")
+args = parser.parse_args()
 
-csv_logger = CSVLogger(
-    log_dir="results/logs"
-)
-
-plugins = [wandb_logger, csv_logger]
-
-# ─── Strategy Setup ───────────────────────────────────────────────────────────
-from flwr.server.strategy import FedAvg
-
-base_strategy = FedAvg(
-    fraction_fit=0.25,
-    min_fit_clients=3,
-    min_evaluate_clients=3,
-    min_available_clients=NUM_PARTITIONS,
-    initial_parameters=INITIAL_PARAMETERS,
-    evaluate_fn=lambda r, p, c={}: evaluate(r, p, c, device=DEVICE),
-    on_fit_config_fn=fit_config,
-)
-
-hooked_strategy = HookedStrategy(base_strategy=base_strategy, plugins=plugins)
-final_strategy = RoundTimerStrategy(base_strategy=hooked_strategy, plugins=plugins)
-
-# ─── Server Setup ─────────────────────────────────────────────────────────────
-def server_fn(context: Context) -> ServerAppComponents:
-    config = ServerConfig(num_rounds=NUM_ROUNDS)
-    return ServerAppComponents(strategy=final_strategy, config=config)
-
-server_app = ServerApp(server_fn=server_fn)
-
-# ─── Run the Simulation ───────────────────────────────────────────────────────
-backend_config = {}
-if DEVICE.type == "cuda":
-    backend_config = {
-        "client_resources": {
-            "num_cpus": 2,
-            "num_gpus": 0.1  # allow 10 clients to share the GPU
-        }
-    }
-
-run_simulation(
-    client_app=client_app,
-    server_app=server_app,
-    num_supernodes=NUM_PARTITIONS,
-    backend_config=backend_config,
-)
-
-# ─── Cleanup ──────────────────────────────────────────────────────────────────
-for plugin in plugins:
-    plugin.finalize()
+run_experiment(args)
