@@ -22,5 +22,7 @@ pip3 install torch torchvision torchaudio --index-url https://download.pytorch.o
 echo "Installing other dependencies..."
 pip install wandb scikit-learn
 
-#echo "Running experiment..."
-#python -m flower_research_extension.experiments.run_experiment
+echo "✅ Setup complete. Now run:"
+echo "   source venv/bin/activate"
+echo "   python -m flower_research_extension.experiments.run_experiment"
+
