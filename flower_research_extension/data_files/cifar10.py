@@ -1,27 +1,33 @@
-import os
 import torch
 import torchvision.transforms as transforms
 from torch.utils.data import DataLoader, Subset, random_split
 from torch.utils.data._utils.collate import default_collate
 from flwr_datasets import FederatedDataset
 from datasets import logging as hf_logging
-from huggingface_hub import login
 from torchvision.datasets import CIFAR10
 
 hf_logging.set_verbosity_error()
-
-HF_TOKEN = os.getenv("HUGGINGFACE_HUB_TOKEN", None)
-if HF_TOKEN:
-    login(HF_TOKEN)
 
 BATCH_SIZE     = 32
 USE_PIN_MEMORY = torch.cuda.is_available()
 CACHE_DIR      = "/tmp/huggingface_cache"
 
-# Global sentinel to avoid retrying HF every time
+# Once HF fails, never retry
 _hf_federated_failed = False
 
-def collate_dict(batch):
+# Our standard CIFAR-10 preprocess
+_transform = transforms.Compose([
+    transforms.ToTensor(),
+    transforms.Normalize((0.5,) * 3, (0.5,) * 3),
+])
+
+def _apply_transforms(example):
+    # example is a dict {"img": PIL.Image, "label": int}
+    example["img"] = _transform(example["img"])
+    return example
+
+def _collate_dict(batch):
+    # batch is a list of (tensor, int)
     imgs, labels = zip(*batch)
     return {
         "img":   default_collate(imgs),
@@ -29,15 +35,13 @@ def collate_dict(batch):
     }
 
 def load_cifar10_partition(partition_id: int, num_partitions: int):
-    """Load CIFAR‑10 (federated or fallback) exactly once per process."""
+    """
+    Return (trainloader, valloader) for client `partition_id` out of `num_partitions`.
+    Tries HF FederatedDataset once, then falls back to torchvision.CIFAR10.
+    """
     global _hf_federated_failed
 
-    transform = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize((0.5,) * 3, (0.5,) * 3),
-    ])
-
-    # 1️⃣ Try once to use HuggingFace FederatedDataset
+    # 1️⃣ Try HF FederatedDataset (once per process)
     if not _hf_federated_failed:
         try:
             fds = FederatedDataset(
@@ -47,6 +51,9 @@ def load_cifar10_partition(partition_id: int, num_partitions: int):
             )
             partition = fds.load_partition(partition_id)
             train_test = partition.train_test_split(test_size=0.2, seed=42)
+
+            # apply our tensor-transform to each example
+            train_test = train_test.with_transform(_apply_transforms)
 
             trainloader = DataLoader(
                 train_test["train"],
@@ -67,27 +74,29 @@ def load_cifar10_partition(partition_id: int, num_partitions: int):
         except Exception as e:
             print(f"❌ HF federated load failed: {e}")
             print("↪️ Falling back to torchvision.CIFAR10 …")
-            _hf_federated_failed = True  # never try HF again
+            _hf_federated_failed = True
 
-    # 2️⃣ Always use torchvision fallback from now on
+    # 2️⃣ torchvision fallback
+    # load entire CIFAR-10 with our transform baked in
     full = CIFAR10(
         root=CACHE_DIR,
         train=True,
         download=True,
-        transform=transform,
+        transform=_transform,
     )
-    # split full dataset into equal client partitions
-    total = len(full)
-    per_client = total // num_partitions
-    start = partition_id * per_client
-    end   = start + per_client if partition_id < num_partitions - 1 else total
-    subset = Subset(full, list(range(start, end)))
 
-    # 80/20 train/val split
-    train_size = int(len(subset) * 0.8)
-    val_size   = len(subset) - train_size
+    # carve out this client's shard
+    total     = len(full)
+    per_client = total // num_partitions
+    start      = partition_id * per_client
+    end        = start + per_client if partition_id < num_partitions - 1 else total
+    shard      = Subset(full, list(range(start, end)))
+
+    # 80/20 train/val split within the shard
+    train_size = int(len(shard) * 0.8)
+    val_size   = len(shard) - train_size
     train_ds, val_ds = random_split(
-        subset,
+        shard,
         [train_size, val_size],
         generator=torch.Generator().manual_seed(42),
     )
@@ -98,7 +107,7 @@ def load_cifar10_partition(partition_id: int, num_partitions: int):
         shuffle=True,
         num_workers=4,
         pin_memory=USE_PIN_MEMORY,
-        collate_fn=collate_dict,
+        collate_fn=_collate_dict,
     )
     valloader = DataLoader(
         val_ds,
@@ -106,7 +115,7 @@ def load_cifar10_partition(partition_id: int, num_partitions: int):
         shuffle=False,
         num_workers=4,
         pin_memory=USE_PIN_MEMORY,
-        collate_fn=collate_dict,
+        collate_fn=_collate_dict,
     )
 
     return trainloader, valloader
