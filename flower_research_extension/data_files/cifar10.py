@@ -15,19 +15,28 @@ CACHE_DIR      = "/tmp/huggingface_cache"
 # Once HF fails, never retry
 _hf_federated_failed = False
 
-# Our standard CIFAR-10 preprocess
+# Standard CIFAR-10 preprocessing
 _transform = transforms.Compose([
     transforms.ToTensor(),
     transforms.Normalize((0.5,) * 3, (0.5,) * 3),
 ])
 
 def _apply_transforms(example):
-    # example is a dict {"img": PIL.Image, "label": int}
-    example["img"] = _transform(example["img"])
+    """
+    HF with_transform passes either a single example {'img': PIL, 'label': int}
+    or a batch {'img': [PIL,...], 'label': [...]}. Handle both.
+    """
+    imgs = example["img"]
+    if isinstance(imgs, list):
+        # batch of PIL Images
+        example["img"] = [_transform(img) for img in imgs]
+    else:
+        # single PIL Image
+        example["img"] = _transform(imgs)
     return example
 
 def _collate_dict(batch):
-    # batch is a list of (tensor, int)
+    # for torchvision fallback we get list of (Tensor, label)
     imgs, labels = zip(*batch)
     return {
         "img":   default_collate(imgs),
@@ -36,12 +45,12 @@ def _collate_dict(batch):
 
 def load_cifar10_partition(partition_id: int, num_partitions: int):
     """
-    Return (trainloader, valloader) for client `partition_id` out of `num_partitions`.
-    Tries HF FederatedDataset once, then falls back to torchvision.CIFAR10.
+    Return (trainloader, valloader) for client partition.
+    First tries HF FederatedDataset once; on failure, falls back to torchvision.
     """
     global _hf_federated_failed
 
-    # 1️⃣ Try HF FederatedDataset (once per process)
+    # 1️⃣ HF FederatedDataset (one-shot)
     if not _hf_federated_failed:
         try:
             fds = FederatedDataset(
@@ -52,7 +61,7 @@ def load_cifar10_partition(partition_id: int, num_partitions: int):
             partition = fds.load_partition(partition_id)
             train_test = partition.train_test_split(test_size=0.2, seed=42)
 
-            # apply our tensor-transform to each example
+            # apply our PIL↦Tensor transform on each example or batch
             train_test = train_test.with_transform(_apply_transforms)
 
             trainloader = DataLoader(
@@ -76,8 +85,7 @@ def load_cifar10_partition(partition_id: int, num_partitions: int):
             print("↪️ Falling back to torchvision.CIFAR10 …")
             _hf_federated_failed = True
 
-    # 2️⃣ torchvision fallback
-    # load entire CIFAR-10 with our transform baked in
+    # 2️⃣ Torchvision fallback
     full = CIFAR10(
         root=CACHE_DIR,
         train=True,
@@ -86,13 +94,13 @@ def load_cifar10_partition(partition_id: int, num_partitions: int):
     )
 
     # carve out this client's shard
-    total     = len(full)
+    total      = len(full)
     per_client = total // num_partitions
     start      = partition_id * per_client
     end        = start + per_client if partition_id < num_partitions - 1 else total
     shard      = Subset(full, list(range(start, end)))
 
-    # 80/20 train/val split within the shard
+    # 80/20 train/val split
     train_size = int(len(shard) * 0.8)
     val_size   = len(shard) - train_size
     train_ds, val_ds = random_split(
