@@ -1,4 +1,3 @@
-# flower_research_extension/data_files/cifar10.py
 
 import os
 import torch
