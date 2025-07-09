@@ -22,3 +22,4 @@ parser.add_argument("--wandb_run_name", type=str, default="cifar10_fedavg", help
 args = parser.parse_args()
 
 run_experiment(args)
+

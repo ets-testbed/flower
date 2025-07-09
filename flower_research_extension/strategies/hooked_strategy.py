@@ -38,9 +38,13 @@ class HookedStrategy(Strategy):
             for plugin in self.plugins:
                 plugin.on_client_result(server_round, client_id, fit_res.metrics)
 
-        for proxy, exc in failures:
-            for plugin in self.plugins:
-                plugin.on_client_failure(server_round, proxy.cid, exc)
+        for item in failures:
+            if isinstance(item, tuple) and len(item) == 2:
+                proxy, exc = item
+                for plugin in self.plugins:
+                    plugin.on_client_failure(server_round, proxy.cid, exc)
+            else:
+                print(f"[WARN] Unexpected failure format in `failures`: {item}")
 
         for plugin in self.plugins:
             plugin.on_round_end(server_round, aggregated_metrics)
