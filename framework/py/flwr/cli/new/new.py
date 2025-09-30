@@ -41,8 +41,10 @@ class MlFramework(str, Enum):
     JAX = "JAX"
     MLX = "MLX"
     NUMPY = "NumPy"
+    XGBOOST = "XGBoost"
     FLOWERTUNE = "FlowerTune"
     BASELINE = "Flower Baseline"
+    PYTORCH_LEGACY_API = "PyTorch (Legacy API, deprecated)"
 
 
 class LlmChallengeName(str, Enum):
@@ -154,6 +156,9 @@ def new(
     if framework_str == MlFramework.BASELINE:
         framework_str = "baseline"
 
+    if framework_str == MlFramework.PYTORCH_LEGACY_API:
+        framework_str = "pytorch_legacy_api"
+
     print(
         typer.style(
             f"\n🔨 Creating Flower App {app_name}...",
@@ -197,7 +202,7 @@ def new(
         }
 
         # Challenge specific context
-        fraction_fit = "0.2" if llm_challenge_str == "code" else "0.1"
+        fraction_train = "0.2" if llm_challenge_str == "code" else "0.1"
         if llm_challenge_str == "generalnlp":
             challenge_name = "General NLP"
             num_clients = "20"
@@ -216,7 +221,7 @@ def new(
             dataset_name = "flwrlabs/code-alpaca-20k"
 
         context["llm_challenge_str"] = llm_challenge_str
-        context["fraction_fit"] = fraction_fit
+        context["fraction_train"] = fraction_train
         context["challenge_name"] = challenge_name
         context["num_clients"] = num_clients
         context["dataset_name"] = dataset_name
@@ -243,10 +248,18 @@ def new(
             MlFramework.TENSORFLOW.value,
             MlFramework.SKLEARN.value,
             MlFramework.NUMPY.value,
+            MlFramework.XGBOOST.value,
+            "pytorch_legacy_api",
         ]
         if framework_str in frameworks_with_tasks:
             files[f"{import_name}/task.py"] = {
                 "template": f"app/code/task.{template_name}.py.tpl"
+            }
+
+        if framework_str == "pytorch_legacy_api":
+            # Use custom __init__ that better captures name of framework
+            files[f"{import_name}/__init__.py"] = {
+                "template": f"app/code/__init__.{framework_str}.py.tpl"
             }
 
         if framework_str == "baseline":
@@ -271,27 +284,35 @@ def new(
 
     prompt = typer.style(
         "🎊 Flower App creation successful.\n\n"
-        "To run your Flower App, use the following command:\n\n",
+        "To run your Flower App, first install its dependencies:\n\n",
         fg=typer.colors.GREEN,
         bold=True,
     )
 
     _add = "	huggingface-cli login\n" if llm_challenge_str else ""
+
     prompt += typer.style(
-        _add + f"	flwr run {package_name}\n\n",
+        f"	cd {package_name} && pip install -e .\n" + _add + "\n",
         fg=typer.colors.BRIGHT_CYAN,
         bold=True,
     )
 
     prompt += typer.style(
-        "If you haven't installed all dependencies yet, follow these steps:\n\n",
+        "then, run the app:\n\n ",
         fg=typer.colors.GREEN,
         bold=True,
     )
 
     prompt += typer.style(
-        f"	cd {package_name}\n" + "	pip install -e .\n" + _add + "	flwr run .\n",
+        "\tflwr run .\n\n",
         fg=typer.colors.BRIGHT_CYAN,
+        bold=True,
+    )
+
+    prompt += typer.style(
+        "💡 Check the README in your app directory to learn how to\n"
+        "customize it and how to run it using the Deployment Runtime.\n",
+        fg=typer.colors.GREEN,
         bold=True,
     )
 

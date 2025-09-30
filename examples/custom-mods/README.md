@@ -29,12 +29,11 @@ and used when defining the `ClientApp` as:
 
 ```python
 app = ClientApp(
-    client_fn=client_fn,
     mods=[basic_mod],
 )
 ```
 
-The mods in this example do not modify the `Message` object that the `ClientApp` is communicating to the `ServerApp`. Instead, the mods only log the _metrics_ returned by the client's `fit()` method to Weight & Biases or into TensorBoard .
+The mods in this example do not modify the `Message` object that the `ClientApp` is communicating to the `ServerApp`. Instead, the mods only log the _metrics_ returned by the `ClientApp`'s `train()` method to Weight & Biases or into TensorBoard .
 
 ## Set up the project
 
@@ -73,14 +72,14 @@ pip install -e .
 
 ## Run the project
 
-> \[!TIP\]
+> [!TIP]
 > By default the `ClientApp` uses the TensorBoard mod, if you would like to enable the Weight & Biases mod, please edit the line at the bottom of `custom_mods/client_app.py` and pass the `get_wandb_mod` mod to the constructor of your `ClientApp`.
 
 You can run your Flower project in both _simulation_ and _deployment_ mode without making changes to the code. If you are starting with Flower, we recommend you using the _simulation_ mode as it requires fewer components to be launched manually. By default, `flwr run` will make use of the Simulation Engine.
 
 ### Run with the Simulation Engine
 
-> \[!NOTE\]
+> [!NOTE]
 > Check the [Simulation Engine documentation](https://flower.ai/docs/framework/how-to-run-simulations.html) to learn more about Flower simulations and how to optimize them.
 
 ```bash

@@ -8,7 +8,7 @@ cd e2e-tmp-test
 echo -e $"\n[tool.flwr.federations.e2e]\naddress = \"127.0.0.1:9093\"\ninsecure = true" >> pyproject.toml
 
 # Start Flower processes in the background
-flower-superlink --insecure 2>&1 | tee flwr_output.log &
+flower-superlink --insecure &
 sleep 2
 
 flower-supernode --insecure --superlink 127.0.0.1:9092 \
@@ -36,21 +36,34 @@ found_success=false
 timeout=120  # Timeout after 120 seconds
 elapsed=0
 
-# Check for "Run finished" in a loop with a timeout
+# Define a cleanup function
+cleanup_and_exit() {
+    kill $cl1_pid; kill $cl2_pid;
+    sleep 1; kill $sl_pid;
+    exit $1
+}
+
+# Check for "finished:completed" status in a loop with a timeout
 while [ "$found_success" = false ] && [ $elapsed -lt $timeout ]; do
-    if grep -q "Run finished" flwr_output.log; then
-        echo "Training worked correctly!"
-        found_success=true
-        exit 0;
+    # Run the command and capture output
+    output=$(flwr ls . e2e --format=json)
+
+    # Extract status from the first run (or loop over all if needed)
+    status=$(echo "$output" | jq -r '.runs[0].status')
+
+    echo "Current status: $status"
+
+    if [ "$status" == "finished:completed" ]; then
+      found_success=true
+      echo "Training worked correctly!"
+      cleanup_and_exit 0
     else
-        echo "Waiting for training ... ($elapsed seconds elapsed)"
+      echo "⏳ Not completed yet, retrying in 2s..."
+      sleep 2
     fi
-    # Sleep for a short period and increment the elapsed time
-    sleep 2
-    elapsed=$((elapsed + 2))
 done
 
 if [ "$found_success" = false ]; then
-    echo "Training did not finish within timeout."
-    exit 1;
+    echo "Training had an issue and timed out."
+    cleanup_and_exit 1
 fi

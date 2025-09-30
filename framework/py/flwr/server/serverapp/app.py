@@ -19,9 +19,9 @@ import argparse
 from logging import DEBUG, ERROR, INFO
 from pathlib import Path
 from queue import Queue
-from time import sleep
 from typing import Optional
 
+from flwr.app.exception import AppExitException
 from flwr.cli.config_utils import get_fab_metadata
 from flwr.cli.install import install_from_fab
 from flwr.cli.utils import get_sha256_hash
@@ -34,10 +34,11 @@ from flwr.common.config import (
 )
 from flwr.common.constant import (
     SERVERAPPIO_API_DEFAULT_CLIENT_ADDRESS,
+    ExecPluginType,
     Status,
     SubStatus,
 )
-from flwr.common.exit import ExitCode, flwr_exit
+from flwr.common.exit import ExitCode, add_exit_handler, flwr_exit
 from flwr.common.heartbeat import HeartbeatSender, get_grpc_app_heartbeat_fn
 from flwr.common.logger import (
     log,
@@ -55,14 +56,18 @@ from flwr.common.serde import (
 )
 from flwr.common.telemetry import EventType, event
 from flwr.common.typing import RunNotRunningException, RunStatus
-from flwr.proto.run_pb2 import UpdateRunStatusRequest  # pylint: disable=E0611
-from flwr.proto.serverappio_pb2 import (  # pylint: disable=E0611
-    PullServerAppInputsRequest,
-    PullServerAppInputsResponse,
-    PushServerAppOutputsRequest,
+from flwr.proto.appio_pb2 import (  # pylint: disable=E0611
+    PullAppInputsRequest,
+    PullAppInputsResponse,
+    PushAppOutputsRequest,
 )
+from flwr.proto.run_pb2 import UpdateRunStatusRequest  # pylint: disable=E0611
+from flwr.proto.serverappio_pb2_grpc import ServerAppIoStub
 from flwr.server.grid.grpc_grid import GrpcGrid
 from flwr.server.run_serverapp import run as run_
+from flwr.supercore.app_utils import start_parent_process_monitor
+from flwr.supercore.superexec.plugin import ServerAppExecPlugin
+from flwr.supercore.superexec.run_superexec import run_with_deprecation_warning
 
 
 def flwr_serverapp() -> None:
@@ -73,14 +78,27 @@ def flwr_serverapp() -> None:
 
     args = _parse_args_run_flwr_serverapp().parse_args()
 
-    log(INFO, "Start `flwr-serverapp` process")
-
     if not args.insecure:
         flwr_exit(
             ExitCode.COMMON_TLS_NOT_SUPPORTED,
             "`flwr-serverapp` does not support TLS yet.",
         )
 
+    # Disallow long-running `flwr-serverapp` processes
+    if args.token is None:
+        run_with_deprecation_warning(
+            cmd="flwr-serverapp",
+            plugin_type=ExecPluginType.SERVER_APP,
+            plugin_class=ServerAppExecPlugin,
+            stub_class=ServerAppIoStub,
+            appio_api_address=args.serverappio_api_address,
+            flwr_dir=args.flwr_dir,
+            parent_pid=args.parent_pid,
+            warn_run_once=args.run_once,
+        )
+        return
+
+    log(INFO, "Start `flwr-serverapp` process")
     log(
         DEBUG,
         "`flwr-serverapp` will attempt to connect to SuperLink's "
@@ -90,174 +108,177 @@ def flwr_serverapp() -> None:
     run_serverapp(
         serverappio_api_address=args.serverappio_api_address,
         log_queue=log_queue,
-        run_once=args.run_once,
+        token=args.token,
         flwr_dir=args.flwr_dir,
         certificates=None,
+        parent_pid=args.parent_pid,
     )
 
     # Restore stdout/stderr
     restore_output()
 
 
-def run_serverapp(  # pylint: disable=R0914, disable=W0212, disable=R0915
+def run_serverapp(  # pylint: disable=R0913, R0914, R0915, R0917, W0212
     serverappio_api_address: str,
     log_queue: Queue[Optional[str]],
-    run_once: bool,
+    token: str,
     flwr_dir: Optional[str] = None,
     certificates: Optional[bytes] = None,
+    parent_pid: Optional[int] = None,
 ) -> None:
     """Run Flower ServerApp process."""
+    # Monitor the main process in case of SIGKILL
+    if parent_pid is not None:
+        start_parent_process_monitor(parent_pid)
+
     # Resolve directory where FABs are installed
     flwr_dir_ = get_flwr_dir(flwr_dir)
     log_uploader = None
-    success = True
     hash_run_id = None
     run_status = None
     heartbeat_sender = None
     grid = None
-    while True:
+    context = None
+    exit_code = ExitCode.SUCCESS
 
-        try:
-            # Initialize the GrpcGrid
-            grid = GrpcGrid(
-                serverappio_service_address=serverappio_api_address,
-                root_certificates=certificates,
-            )
+    def on_exit() -> None:
+        # Stop heartbeat sender
+        if heartbeat_sender:
+            heartbeat_sender.stop()
 
-            # Pull ServerAppInputs from LinkState
-            req = PullServerAppInputsRequest()
-            log(DEBUG, "[flwr-serverapp] Pull ServerAppInputs")
-            res: PullServerAppInputsResponse = grid._stub.PullServerAppInputs(req)
-            if not res.HasField("run"):
-                sleep(3)
-                run_status = None
-                continue
+        # Stop log uploader for this run and upload final logs
+        if log_uploader:
+            stop_log_uploader(log_queue, log_uploader)
 
-            context = context_from_proto(res.context)
-            run = run_from_proto(res.run)
-            fab = fab_from_proto(res.fab)
-
-            hash_run_id = get_sha256_hash(run.run_id)
-
-            grid.set_run(run.run_id)
-
-            # Start log uploader for this run
-            log_uploader = start_log_uploader(
-                log_queue=log_queue,
-                node_id=0,
-                run_id=run.run_id,
-                stub=grid._stub,
-            )
-
-            log(DEBUG, "[flwr-serverapp] Start FAB installation.")
-            install_from_fab(fab.content, flwr_dir=flwr_dir_, skip_prompt=True)
-
-            fab_id, fab_version = get_fab_metadata(fab.content)
-
-            app_path = str(
-                get_project_dir(fab_id, fab_version, fab.hash_str, flwr_dir_)
-            )
-            config = get_project_config(app_path)
-
-            # Obtain server app reference and the run config
-            server_app_attr = config["tool"]["flwr"]["app"]["components"]["serverapp"]
-            server_app_run_config = get_fused_config_from_dir(
-                Path(app_path), run.override_config
-            )
-
-            # Update run_config in context
-            context.run_config = server_app_run_config
-
-            log(
-                DEBUG,
-                "[flwr-serverapp] Will load ServerApp `%s` in %s",
-                server_app_attr,
-                app_path,
-            )
-
-            # Change status to Running
-            run_status_proto = run_status_to_proto(RunStatus(Status.RUNNING, "", ""))
+        # Update run status
+        if run_status and grid:
+            run_status_proto = run_status_to_proto(run_status)
             grid._stub.UpdateRunStatus(
                 UpdateRunStatusRequest(run_id=run.run_id, run_status=run_status_proto)
             )
 
-            event(
-                EventType.FLWR_SERVERAPP_RUN_ENTER,
-                event_details={"run-id-hash": hash_run_id},
-            )
+        # Close the Grpc connection
+        if grid:
+            grid.close()
 
-            # Set up heartbeat sender
-            heartbeat_fn = get_grpc_app_heartbeat_fn(
-                grid._stub,
-                run.run_id,
-                failure_message="Heartbeat failed unexpectedly. The SuperLink could "
-                "not find the provided run ID, or the run status is invalid.",
-            )
-            heartbeat_sender = HeartbeatSender(heartbeat_fn)
-            heartbeat_sender.start()
+    add_exit_handler(on_exit)
 
-            # Load and run the ServerApp with the Grid
-            updated_context = run_(
-                grid=grid,
-                server_app_dir=app_path,
-                server_app_attr=server_app_attr,
-                context=context,
-            )
+    try:
+        # Initialize the GrpcGrid
+        grid = GrpcGrid(
+            serverappio_service_address=serverappio_api_address,
+            root_certificates=certificates,
+        )
 
-            # Send resulting context
-            context_proto = context_to_proto(updated_context)
-            log(DEBUG, "[flwr-serverapp] Will push ServerAppOutputs")
-            out_req = PushServerAppOutputsRequest(
-                run_id=run.run_id, context=context_proto
-            )
-            _ = grid._stub.PushServerAppOutputs(out_req)
+        # Pull ServerAppInputs from LinkState
+        req = PullAppInputsRequest(token=token)
+        log(DEBUG, "[flwr-serverapp] Pull ServerAppInputs")
+        res: PullAppInputsResponse = grid._stub.PullAppInputs(req)
+        context = context_from_proto(res.context)
+        run = run_from_proto(res.run)
+        fab = fab_from_proto(res.fab)
 
-            run_status = RunStatus(Status.FINISHED, SubStatus.COMPLETED, "")
-        except RunNotRunningException:
-            log(INFO, "")
-            log(INFO, "Run ID %s stopped.", run.run_id)
-            log(INFO, "")
-            run_status = None
-            success = False
+        hash_run_id = get_sha256_hash(run.run_id)
 
-        except Exception as ex:  # pylint: disable=broad-exception-caught
-            exc_entity = "ServerApp"
-            log(ERROR, "%s raised an exception", exc_entity, exc_info=ex)
-            run_status = RunStatus(Status.FINISHED, SubStatus.FAILED, str(ex))
-            success = False
+        grid.set_run(run.run_id)
 
-        finally:
-            # Stop heartbeat sender
-            if heartbeat_sender:
-                heartbeat_sender.stop()
-                heartbeat_sender = None
+        # Start log uploader for this run
+        log_uploader = start_log_uploader(
+            log_queue=log_queue,
+            node_id=0,
+            run_id=run.run_id,
+            stub=grid._stub,
+        )
 
-            # Stop log uploader for this run and upload final logs
-            if log_uploader:
-                stop_log_uploader(log_queue, log_uploader)
-                log_uploader = None
+        log(DEBUG, "[flwr-serverapp] Start FAB installation.")
+        install_from_fab(fab.content, flwr_dir=flwr_dir_, skip_prompt=True)
 
-            # Update run status
-            if run_status and grid:
-                run_status_proto = run_status_to_proto(run_status)
-                grid._stub.UpdateRunStatus(
-                    UpdateRunStatusRequest(
-                        run_id=run.run_id, run_status=run_status_proto
-                    )
-                )
+        fab_id, fab_version = get_fab_metadata(fab.content)
 
-            # Close the Grpc connection
-            if grid:
-                grid.close()
+        app_path = str(get_project_dir(fab_id, fab_version, fab.hash_str, flwr_dir_))
+        config = get_project_config(app_path)
 
-            event(
-                EventType.FLWR_SERVERAPP_RUN_LEAVE,
-                event_details={"run-id-hash": hash_run_id, "success": success},
-            )
+        # Obtain server app reference and the run config
+        server_app_attr = config["tool"]["flwr"]["app"]["components"]["serverapp"]
+        server_app_run_config = get_fused_config_from_dir(
+            Path(app_path), run.override_config
+        )
 
-        # Stop the loop if `flwr-serverapp` is expected to process a single run
-        if run_once:
-            break
+        # Update run_config in context
+        context.run_config = server_app_run_config
+
+        log(
+            DEBUG,
+            "[flwr-serverapp] Will load ServerApp `%s` in %s",
+            server_app_attr,
+            app_path,
+        )
+
+        # Change status to Running
+        run_status_proto = run_status_to_proto(RunStatus(Status.RUNNING, "", ""))
+        grid._stub.UpdateRunStatus(
+            UpdateRunStatusRequest(run_id=run.run_id, run_status=run_status_proto)
+        )
+
+        event(
+            EventType.FLWR_SERVERAPP_RUN_ENTER,
+            event_details={"run-id-hash": hash_run_id},
+        )
+
+        # Set up heartbeat sender
+        heartbeat_fn = get_grpc_app_heartbeat_fn(
+            grid._stub,
+            run.run_id,
+            failure_message="Heartbeat failed unexpectedly. The SuperLink could "
+            "not find the provided run ID, or the run status is invalid.",
+        )
+        heartbeat_sender = HeartbeatSender(heartbeat_fn)
+        heartbeat_sender.start()
+
+        # Load and run the ServerApp with the Grid
+        updated_context = run_(
+            grid=grid,
+            server_app_dir=app_path,
+            server_app_attr=server_app_attr,
+            context=context,
+        )
+
+        # Send resulting context
+        context_proto = context_to_proto(updated_context)
+        log(DEBUG, "[flwr-serverapp] Will push ServerAppOutputs")
+        out_req = PushAppOutputsRequest(
+            token=token, run_id=run.run_id, context=context_proto
+        )
+        _ = grid._stub.PushAppOutputs(out_req)
+
+        run_status = RunStatus(Status.FINISHED, SubStatus.COMPLETED, "")
+
+    # Raised when the run is already stopped by the user
+    except RunNotRunningException:
+        log(INFO, "")
+        log(INFO, "Run ID %s stopped.", run.run_id)
+        log(INFO, "")
+        run_status = None
+        # No need to update the exit code since this is expected behavior
+
+    except Exception as ex:  # pylint: disable=broad-exception-caught
+        exc_entity = "ServerApp"
+        log(ERROR, "%s raised an exception", exc_entity, exc_info=ex)
+        run_status = RunStatus(Status.FINISHED, SubStatus.FAILED, str(ex))
+
+        # Set exit code
+        exit_code = ExitCode.SERVERAPP_EXCEPTION  # General exit code
+        if isinstance(ex, AppExitException):
+            exit_code = ex.exit_code
+
+    flwr_exit(
+        code=exit_code,
+        event_type=EventType.FLWR_SERVERAPP_RUN_LEAVE,
+        event_details={
+            "run-id-hash": hash_run_id,
+            "success": exit_code == ExitCode.SUCCESS,
+        },
+    )
 
 
 def _parse_args_run_flwr_serverapp() -> argparse.ArgumentParser:
@@ -271,12 +292,6 @@ def _parse_args_run_flwr_serverapp() -> argparse.ArgumentParser:
         type=str,
         help="Address of SuperLink's ServerAppIo API (IPv4, IPv6, or a domain name)."
         f"By default, it is set to {SERVERAPPIO_API_DEFAULT_CLIENT_ADDRESS}.",
-    )
-    parser.add_argument(
-        "--run-once",
-        action="store_true",
-        help="When set, this process will start a single ServerApp for a pending Run. "
-        "If there is no pending Run, the process will exit.",
     )
     add_args_flwr_app_common(parser=parser)
     return parser

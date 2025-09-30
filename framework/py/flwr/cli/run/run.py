@@ -30,7 +30,7 @@ from flwr.cli.config_utils import (
     process_loaded_project_config,
     validate_federation_in_project_config,
 )
-from flwr.cli.constant import FEDERATION_CONFIG_HELP_MESSAGE
+from flwr.cli.constant import FEDERATION_CONFIG_HELP_MESSAGE, RUN_CONFIG_HELP_MESSAGE
 from flwr.common.config import (
     flatten_dict,
     get_metadata_from_config,
@@ -41,8 +41,8 @@ from flwr.common.constant import CliOutputFormat
 from flwr.common.logger import print_json_error, redirect_output, restore_output
 from flwr.common.serde import config_record_to_proto, fab_to_proto, user_config_to_proto
 from flwr.common.typing import Fab
-from flwr.proto.exec_pb2 import StartRunRequest  # pylint: disable=E0611
-from flwr.proto.exec_pb2_grpc import ExecStub
+from flwr.proto.control_pb2 import StartRunRequest  # pylint: disable=E0611
+from flwr.proto.control_pb2_grpc import ControlStub
 
 from ..log import start_stream
 from ..utils import flwr_cli_grpc_exc_handler, init_channel, try_obtain_cli_auth_plugin
@@ -65,11 +65,7 @@ def run(
         typer.Option(
             "--run-config",
             "-c",
-            help="Override run configuration values in the format:\n\n"
-            "`--run-config 'key1=value1 key2=value2' --run-config 'key3=value3'`\n\n"
-            "Values can be of any type supported in TOML, such as bool, int, "
-            "float, or string. Ensure that the keys (`key1`, `key2`, `key3` "
-            "in this example) exist in `pyproject.toml` for proper overriding.",
+            help=RUN_CONFIG_HELP_MESSAGE,
         ),
     ] = None,
     federation_config_overrides: Annotated[
@@ -112,7 +108,7 @@ def run(
         )
 
         if "address" in federation_config:
-            _run_with_exec_api(
+            _run_with_control_api(
                 app,
                 federation,
                 federation_config,
@@ -121,7 +117,7 @@ def run(
                 output_format,
             )
         else:
-            _run_without_exec_api(
+            _run_without_control_api(
                 app, federation_config, run_config_overrides, federation
             )
     except (typer.Exit, Exception) as err:  # pylint: disable=broad-except
@@ -142,7 +138,7 @@ def run(
 
 
 # pylint: disable-next=R0913, R0914, R0917
-def _run_with_exec_api(
+def _run_with_control_api(
     app: Path,
     federation: str,
     federation_config: dict[str, Any],
@@ -154,7 +150,7 @@ def _run_with_exec_api(
     try:
         auth_plugin = try_obtain_cli_auth_plugin(app, federation, federation_config)
         channel = init_channel(app, federation_config, auth_plugin)
-        stub = ExecStub(channel)
+        stub = ControlStub(channel)
 
         fab_bytes, fab_hash, config = build_fab(app)
         fab_id, fab_version = get_metadata_from_config(config)
@@ -203,7 +199,7 @@ def _run_with_exec_api(
             channel.close()
 
 
-def _run_without_exec_api(
+def _run_without_control_api(
     app: Optional[Path],
     federation_config: dict[str, Any],
     config_overrides: Optional[list[str]],

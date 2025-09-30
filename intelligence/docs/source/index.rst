@@ -1,6 +1,11 @@
 Flower Intelligence
 ===================
 
+.. note::
+
+    Flower Confidential Remote Compute is now **publicly available**! You can sign up
+    directly on the Flower Intelligence `page <https://flower.ai/intelligence>`_.
+
 Flower Intelligence is a cross-platform inference library that let's user seamlessly
 interact with Large-Language Models both locally and remotely in a secure and private
 way. The library was created by the ``Flower Labs`` team that also created `Flower: A
@@ -887,12 +892,6 @@ that takes a :doc:`Progress <ts-api-ref/interfaces/Progress>` object as input:
 Flower Confidential Remote Compute
 ----------------------------------
 
-.. warning::
-
-    Flower Confidential Remote Compute is available in private beta. If you are
-    interested in using Confidential Remote Compute, please apply for Early Access via
-    the `Flower Intelligence Pilot Program <https://forms.gle/J8pFpMrsmek2VFKq8>`_.
-
 Flower Intelligence prioritizes local inference, but also allows to privately handoff
 the compute to the Flower Confidential Remote Compute service when local resources are
 scarce. You can find more information on `flower.ai/intelligence
@@ -1018,7 +1017,6 @@ You will also need to provide a valid API key via the ``apiKey`` attribute.
             suspend fun main() {
                 val fi = FlowerIntelligence
                 fi.apiKey = "YOUR_API_KEY"
-                // Flower Confidential Remote Compute enabled by default in backend setup
 
                 val messages = listOf(
                     Message(role = "system", content = "You are a helpful assistant."),
@@ -1039,6 +1037,83 @@ You will also need to provide a valid API key via the ``apiKey`` attribute.
                     println((error as Failure).message)
                 }
             }
+
+Embedding
+---------
+
+.. warning::
+
+    This feature currently only works with Flower Confidential Remote Compute on the
+    TypeScript SDK. If you are interested in using Confidential Remote Compute, you can
+    signup on the Flower Intelligence `page <https://flower.ai/intelligence>`_.
+
+You can embed some text or an array of texts using the ``embed`` method of the
+``FlowerIntelligence`` obeject (currently this only works with the
+``qwen/qwen3-embedding`` model).
+
+You will need to enable ``remoteHandoff`` and to provide a valid API key via the
+``apiKey`` attribute.
+
+.. tab-set::
+    :sync-group: category
+
+    .. tab-item:: TypeScript
+        :sync: ts
+
+        .. code-block:: ts
+
+            import { Embedding, Result, FlowerIntelligence } from '@flwr/flwr';
+
+            // Access the singleton instance
+            const fi: FlowerIntelligence = FlowerIntelligence.instance;
+
+            // Enable remote processing and provide your API key
+            fi.remoteHandoff = true;
+            fi.apiKey = "YOUR_API_KEY";
+
+            async function main() {
+              const response: Result<Embedding> = await fi.embed({
+                model: 'qwen/qwen3-embedding',
+                input: 'Hello world!'
+              });
+
+              if (!response.ok) {
+                console.error(`${response.failure.code}: ${response.failure.description}`);
+              } else {
+                console.log('Full response:', response.value);
+              }
+            }
+
+            await main().then().catch();
+
+    .. tab-item:: JavaScript
+        :sync: js
+
+        .. code-block:: js
+
+            import { FlowerIntelligence } from '@flwr/flwr';
+
+            // Access the singleton instance
+            const fi = FlowerIntelligence.instance;
+
+            // Enable remote processing and provide your API key
+            fi.remoteHandoff = true;
+            fi.apiKey = "YOUR_API_KEY";
+
+            async function main() {
+              const response = await fi.embed({
+                model: 'qwen/qwen3-embedding',
+                input: 'Hello world!'
+              });
+
+              if (!response.ok) {
+                console.error(`${response.failure.code}: ${response.failure.description}`);
+              } else {
+                console.log(response.value);
+              }
+            }
+
+            await main().then().catch();
 
 References
 ----------

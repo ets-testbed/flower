@@ -55,7 +55,7 @@ You can run your Flower project in both _simulation_ and _deployment_ mode witho
 
 ### Run with the Simulation Engine
 
-> \[!NOTE\]
+> [!NOTE]
 > Check the [Simulation Engine documentation](https://flower.ai/docs/framework/how-to-run-simulations.html) to learn more about Flower simulations and how to optimize them.
 
 ```bash
@@ -69,7 +69,7 @@ This command will run FL simulations with a 4-bit [OpenLLaMA 3Bv2](https://huggi
 flwr run . --run-config "model.name='openlm-research/open_llama_7b_v2' model.quantization=8"
 
 # Run for 50 rounds but increasing the fraction of clients that participate per round to 25%
-flwr run . --run-config "num-server-rounds=50 strategy.fraction-fit=0.25"
+flwr run . --run-config "num-server-rounds=50 strategy.fraction-train=0.25"
 ```
 
 ### Run with the Deployment Engine

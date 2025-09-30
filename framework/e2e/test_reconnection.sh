@@ -65,7 +65,7 @@ echo "Killing Superlink"
 sleep 3
 
 # Restart superlink, the clients should now be able to reconnect to it
-timeout 10m flower-superlink --insecure $db_arg $rest_arg 2>&1 | tee flwr_output.log &
+timeout 10m flower-superlink --insecure $db_arg $rest_arg &
 sl_pids=$(pgrep -f "flower-superlink")
 echo "Restarting Superlink"
 sleep 20
@@ -106,29 +106,36 @@ found_success=false
 timeout=120  # Timeout after 120 seconds
 elapsed=0
 
-# Check for "Success" in a loop with a timeout
-while [ "$found_success" = false ] && [ $elapsed -lt $timeout ]; do
-    if grep -q "Run finished" flwr_output.log; then
-        echo "Training worked correctly!"
-        found_success=true
-        kill $cl1_pid; kill $cl2_pid
-        sleep 2  # Allow some time for SuperNodes to terminate
-        check_and_kill "$sl_pids"
-        sleep 2  # Allow some time for SuperLink to terminate
-        exit 0
-    else
-        echo "Waiting for training ... ($elapsed seconds elapsed)"
-    fi
-    # Sleep for a short period and increment the elapsed time
-    sleep 2
-    elapsed=$((elapsed + 2))
-done
-
-if [ "$found_success" = false ]; then
-    echo "Training had an issue and timed out."
+# Define a cleanup function
+cleanup_and_exit() {
     kill $cl1_pid; kill $cl2_pid
     sleep 2  # Allow some time for SuperNodes to terminate
     check_and_kill "$sl_pids"
     sleep 2  # Allow some time for SuperLink to terminate
-    exit 1
+    exit $1
+}
+
+# Check for "finished:completed" status in a loop with a timeout
+while [ "$found_success" = false ] && [ $elapsed -lt $timeout ]; do
+    # Run the command and capture output
+    output=$(flwr ls . e2e --format=json)
+
+    # Extract status from the first run (or loop over all if needed)
+    status=$(echo "$output" | jq -r '.runs[0].status')
+
+    echo "Current status: $status"
+
+    if [ "$status" == "finished:completed" ]; then
+      found_success=true
+      echo "Training worked correctly!"
+      cleanup_and_exit 0
+    else
+      echo "⏳ Not completed yet, retrying in 2s..."
+      sleep 2
+    fi
+done
+
+if [ "$found_success" = false ]; then
+    echo "Training had an issue and timed out."
+    cleanup_and_exit 1
 fi

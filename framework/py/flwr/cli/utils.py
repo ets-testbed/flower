@@ -32,6 +32,9 @@ from flwr.common.constant import (
     AUTH_TYPE_JSON_KEY,
     CREDENTIALS_DIR,
     FLWR_DIR,
+    NO_ARTIFACT_PROVIDER_MESSAGE,
+    NO_USER_AUTH_MESSAGE,
+    PULL_UNFINISHED_RUN_MESSAGE,
     RUN_ID_NOT_FOUND_MESSAGE,
 )
 from flwr.common.grpc import (
@@ -259,7 +262,7 @@ def try_obtain_cli_auth_plugin(
 def init_channel(
     app: Path, federation_config: dict[str, Any], auth_plugin: Optional[CliAuthPlugin]
 ) -> grpc.Channel:
-    """Initialize gRPC channel to the Exec API."""
+    """Initialize gRPC channel to the Control API."""
     insecure, root_certificates_bytes = validate_certificate_in_federation_config(
         app, federation_config
     )
@@ -296,9 +299,9 @@ def init_channel(
 def flwr_cli_grpc_exc_handler() -> Iterator[None]:
     """Context manager to handle specific gRPC errors.
 
-    It catches grpc.RpcError exceptions with UNAUTHENTICATED, UNIMPLEMENTED, and
-    PERMISSION_DENIED statuses, informs the user, and exits the application. All other
-    exceptions will be allowed to escape.
+    It catches grpc.RpcError exceptions with UNAUTHENTICATED, UNIMPLEMENTED,
+    UNAVAILABLE, and PERMISSION_DENIED statuses, informs the user, and exits the
+    application. All other exceptions will be allowed to escape.
     """
     try:
         yield
@@ -312,25 +315,48 @@ def flwr_cli_grpc_exc_handler() -> Iterator[None]:
             )
             raise typer.Exit(code=1) from None
         if e.code() == grpc.StatusCode.UNIMPLEMENTED:
-            typer.secho(
-                "❌ User authentication is not enabled on this SuperLink.",
-                fg=typer.colors.RED,
-                bold=True,
-            )
+            if e.details() == NO_USER_AUTH_MESSAGE:  # pylint: disable=E1101
+                typer.secho(
+                    "❌ User authentication is not enabled on this SuperLink.",
+                    fg=typer.colors.RED,
+                    bold=True,
+                )
+            elif e.details() == NO_ARTIFACT_PROVIDER_MESSAGE:  # pylint: disable=E1101
+                typer.secho(
+                    "❌ The SuperLink does not support `flwr pull` command.",
+                    fg=typer.colors.RED,
+                    bold=True,
+                )
+            else:
+                typer.secho(
+                    "❌ The SuperLink cannot process this request. Please verify that "
+                    "you set the address to its Control API endpoint correctly in your "
+                    "`pyproject.toml`, and ensure that the Flower versions used by "
+                    "the CLI and SuperLink are compatible.",
+                    fg=typer.colors.RED,
+                    bold=True,
+                )
             raise typer.Exit(code=1) from None
         if e.code() == grpc.StatusCode.PERMISSION_DENIED:
             typer.secho(
-                "❌ Authorization failed. Please contact your administrator"
-                " to check your permissions.",
+                "❌ Permission denied.",
                 fg=typer.colors.RED,
                 bold=True,
             )
-            # pylint: disable=E1101
+            # pylint: disable-next=E1101
             typer.secho(e.details(), fg=typer.colors.RED, bold=True)
+            raise typer.Exit(code=1) from None
+        if e.code() == grpc.StatusCode.UNAVAILABLE:
+            typer.secho(
+                "Connection to the SuperLink is unavailable. Please check your network "
+                "connection and 'address' in the federation configuration.",
+                fg=typer.colors.RED,
+                bold=True,
+            )
             raise typer.Exit(code=1) from None
         if (
             e.code() == grpc.StatusCode.NOT_FOUND
-            and e.details() == RUN_ID_NOT_FOUND_MESSAGE
+            and e.details() == RUN_ID_NOT_FOUND_MESSAGE  # pylint: disable=E1101
         ):
             typer.secho(
                 "❌ Run ID not found.",
@@ -338,4 +364,13 @@ def flwr_cli_grpc_exc_handler() -> Iterator[None]:
                 bold=True,
             )
             raise typer.Exit(code=1) from None
+        if e.code() == grpc.StatusCode.FAILED_PRECONDITION:
+            if e.details() == PULL_UNFINISHED_RUN_MESSAGE:  # pylint: disable=E1101
+                typer.secho(
+                    "❌ Run is not finished yet. Artifacts can only be pulled after "
+                    "the run is finished. You can check the run status with `flwr ls`.",
+                    fg=typer.colors.RED,
+                    bold=True,
+                )
+                raise typer.Exit(code=1) from None
         raise

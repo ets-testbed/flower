@@ -35,7 +35,7 @@ CLIENTAPPIO_PORT = "9094"
 SERVERAPPIO_PORT = "9091"
 FLEETAPI_GRPC_RERE_PORT = "9092"
 FLEETAPI_PORT = "9095"
-EXEC_API_PORT = "9093"
+CONTROL_API_PORT = "9093"
 SIMULATIONIO_PORT = "9096"
 # Octets
 SERVER_OCTET = "0.0.0.0"
@@ -51,7 +51,7 @@ FLEET_API_GRPC_BIDI_DEFAULT_ADDRESS = (
     "[::]:8080"  # IPv6 to keep start_server compatible
 )
 FLEET_API_REST_DEFAULT_ADDRESS = f"{SERVER_OCTET}:{FLEETAPI_PORT}"
-EXEC_API_DEFAULT_SERVER_ADDRESS = f"{SERVER_OCTET}:{EXEC_API_PORT}"
+CONTROL_API_DEFAULT_SERVER_ADDRESS = f"{SERVER_OCTET}:{CONTROL_API_PORT}"
 SIMULATIONIO_API_DEFAULT_SERVER_ADDRESS = f"{SERVER_OCTET}:{SIMULATIONIO_PORT}"
 SIMULATIONIO_API_DEFAULT_CLIENT_ADDRESS = f"{CLIENT_OCTET}:{SIMULATIONIO_PORT}"
 
@@ -103,7 +103,7 @@ ISOLATION_MODE_PROCESS = "process"
 # Log streaming configurations
 CONN_REFRESH_PERIOD = 60  # Stream connection refresh period
 CONN_RECONNECT_INTERVAL = 0.5  # Reconnect interval between two stream connections
-LOG_STREAM_INTERVAL = 0.5  # Log stream interval for `ExecServicer.StreamLogs`
+LOG_STREAM_INTERVAL = 0.5  # Log stream interval for `ControlServicer.StreamLogs`
 LOG_UPLOAD_INTERVAL = 0.2  # Minimum interval between two log uploads
 
 # Retry configurations
@@ -123,7 +123,7 @@ AUTHZ_TYPE_YAML_KEY = "authz_type"  # For key name in YAML file
 PUBLIC_KEY_HEADER = "flwr-public-key-bin"  # Must end with "-bin" for binary data
 SIGNATURE_HEADER = "flwr-signature-bin"  # Must end with "-bin" for binary data
 TIMESTAMP_HEADER = "flwr-timestamp"
-TIMESTAMP_TOLERANCE = 10  # General tolerance for timestamp verification
+TIMESTAMP_TOLERANCE = 300  # General tolerance for timestamp verification
 SYSTEM_TIME_TOLERANCE = 5  # Allowance for system time drift
 
 # Constants for grpc retry
@@ -135,6 +135,7 @@ GC_THRESHOLD = 200_000_000  # 200 MB
 # Constants for Inflatable
 HEAD_BODY_DIVIDER = b"\x00"
 HEAD_VALUE_DIVIDER = " "
+MAX_ARRAY_CHUNK_SIZE = 20_971_520  # 20 MB
 
 # Constants for serialization
 INT64_MAX_VALUE = 9223372036854775807  # (1 << 63) - 1
@@ -151,8 +152,11 @@ PULL_INITIAL_BACKOFF = 1  # Initial backoff time for pulling objects
 PULL_BACKOFF_CAP = 10  # Maximum backoff time for pulling objects
 
 
-# ExecServicer constants
+# ControlServicer constants
 RUN_ID_NOT_FOUND_MESSAGE = "Run ID not found"
+NO_USER_AUTH_MESSAGE = "ControlServicer initialized without user authentication"
+NO_ARTIFACT_PROVIDER_MESSAGE = "ControlServicer initialized without artifact provider"
+PULL_UNFINISHED_RUN_MESSAGE = "Cannot pull artifacts for an unfinished run"
 
 
 class MessageType:
@@ -198,6 +202,7 @@ class ErrorCode:
     MESSAGE_UNAVAILABLE = 3
     REPLY_MESSAGE_UNAVAILABLE = 4
     NODE_UNAVAILABLE = 5
+    MOD_FAILED_PRECONDITION = 6
 
     def __new__(cls) -> ErrorCode:
         """Prevent instantiation."""
@@ -258,3 +263,21 @@ class EventLogWriterType:
     def __new__(cls) -> EventLogWriterType:
         """Prevent instantiation."""
         raise TypeError(f"{cls.__name__} cannot be instantiated.")
+
+
+class ExecPluginType:
+    """SuperExec plugin types."""
+
+    CLIENT_APP = "clientapp"
+    SERVER_APP = "serverapp"
+    SIMULATION = "simulation"
+
+    def __new__(cls) -> ExecPluginType:
+        """Prevent instantiation."""
+        raise TypeError(f"{cls.__name__} cannot be instantiated.")
+
+    @staticmethod
+    def all() -> list[str]:
+        """Return all SuperExec plugin types."""
+        # Filter all constants (uppercase) of the class
+        return [v for k, v in vars(ExecPluginType).items() if k.isupper()]
