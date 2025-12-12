@@ -16,10 +16,11 @@
 
 
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 
+from flwr.cli.auth_plugin import LoginError, NoOpCliAuthPlugin
 from flwr.cli.config_utils import (
     exit_if_no_address,
     get_insecure_flag,
@@ -28,14 +29,19 @@ from flwr.cli.config_utils import (
     validate_federation_in_project_config,
 )
 from flwr.cli.constant import FEDERATION_CONFIG_HELP_MESSAGE
-from flwr.common.typing import UserAuthLoginDetails
+from flwr.common.typing import AccountAuthLoginDetails
 from flwr.proto.control_pb2 import (  # pylint: disable=E0611
     GetLoginDetailsRequest,
     GetLoginDetailsResponse,
 )
 from flwr.proto.control_pb2_grpc import ControlStub
 
-from ..utils import flwr_cli_grpc_exc_handler, init_channel, try_obtain_cli_auth_plugin
+from ..utils import (
+    account_auth_enabled,
+    flwr_cli_grpc_exc_handler,
+    init_channel,
+    load_cli_auth_plugin,
+)
 
 
 def login(  # pylint: disable=R0914
@@ -44,11 +50,11 @@ def login(  # pylint: disable=R0914
         typer.Argument(help="Path of the Flower App to run."),
     ] = Path("."),
     federation: Annotated[
-        Optional[str],
+        str | None,
         typer.Argument(help="Name of the federation to login into."),
     ] = None,
     federation_config_overrides: Annotated[
-        Optional[list[str]],
+        list[str] | None,
         typer.Option(
             "--federation-config",
             help=FEDERATION_CONFIG_HELP_MESSAGE,
@@ -59,7 +65,7 @@ def login(  # pylint: disable=R0914
     typer.secho("Loading project configuration... ", fg=typer.colors.BLUE)
 
     pyproject_path = app / "pyproject.toml" if app else None
-    config, errors, warnings = load_and_validate(path=pyproject_path)
+    config, errors, warnings = load_and_validate(pyproject_path, check_module=False)
 
     config = process_loaded_project_config(config, errors, warnings)
     federation, federation_config = validate_federation_in_project_config(
@@ -67,14 +73,16 @@ def login(  # pylint: disable=R0914
     )
     exit_if_no_address(federation_config, "login")
 
-    # Check if `enable-user-auth` is set to `true`
-    if not federation_config.get("enable-user-auth", False):
+    # Check if `enable-account-auth` is set to `true`
+
+    if not account_auth_enabled(federation_config):
         typer.secho(
-            f"❌ User authentication is not enabled for the federation '{federation}'. "
-            "To enable it, set `enable-user-auth = true` in the federation "
-            "configuration.",
+            "❌ Account authentication is not enabled for the federation "
+            f"'{federation}'. To enable it, set `enable-account-auth = true` "
+            "in the federation configuration.",
             fg=typer.colors.RED,
             bold=True,
+            err=True,
         )
         raise typer.Exit(code=1)
     # Check if insecure flag is set to `True`
@@ -85,10 +93,11 @@ def login(  # pylint: disable=R0914
             "`true` in the federation configuration.",
             fg=typer.colors.RED,
             bold=True,
+            err=True,
         )
         raise typer.Exit(code=1)
 
-    channel = init_channel(app, federation_config, None)
+    channel = init_channel(app, federation_config, NoOpCliAuthPlugin(Path()))
     stub = ControlStub(channel)
 
     login_request = GetLoginDetailsRequest()
@@ -96,28 +105,33 @@ def login(  # pylint: disable=R0914
         login_response: GetLoginDetailsResponse = stub.GetLoginDetails(login_request)
 
     # Get the auth plugin
-    auth_type = login_response.auth_type
-    auth_plugin = try_obtain_cli_auth_plugin(
-        app, federation, federation_config, auth_type
-    )
-    if auth_plugin is None:
-        typer.secho(
-            f'❌ Authentication type "{auth_type}" not found',
-            fg=typer.colors.RED,
-            bold=True,
-        )
-        raise typer.Exit(code=1)
+    authn_type = login_response.authn_type
+    auth_plugin = load_cli_auth_plugin(app, federation, federation_config, authn_type)
 
     # Login
-    details = UserAuthLoginDetails(
-        auth_type=login_response.auth_type,
+    details = AccountAuthLoginDetails(
+        authn_type=login_response.authn_type,
         device_code=login_response.device_code,
         verification_uri_complete=login_response.verification_uri_complete,
         expires_in=login_response.expires_in,
         interval=login_response.interval,
     )
-    with flwr_cli_grpc_exc_handler():
-        credentials = auth_plugin.login(details, stub)
+    try:
+        with flwr_cli_grpc_exc_handler():
+            credentials = auth_plugin.login(details, stub)
+        typer.secho(
+            "✅ Login successful.",
+            fg=typer.colors.GREEN,
+            bold=False,
+        )
+    except LoginError as e:
+        typer.secho(
+            f"❌ Login failed: {e.message}",
+            fg=typer.colors.RED,
+            bold=True,
+            err=True,
+        )
+        raise typer.Exit(code=1) from None
 
     # Store the tokens
     auth_plugin.store_tokens(credentials)

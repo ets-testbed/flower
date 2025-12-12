@@ -16,12 +16,10 @@
 
 
 from logging import INFO
-from typing import Optional
 
 import grpc
 
 from flwr.common import GRPC_MAX_MESSAGE_LENGTH
-from flwr.common.auth_plugin import ControlAuthPlugin, ControlAuthzPlugin
 from flwr.common.event_log_plugin import EventLogWriterPlugin
 from flwr.common.exit import ExitCode, flwr_exit
 from flwr.common.grpc import generic_create_grpc_server
@@ -32,17 +30,22 @@ from flwr.supercore.ffs import FfsFactory
 from flwr.supercore.license_plugin import LicensePlugin
 from flwr.supercore.object_store import ObjectStoreFactory
 from flwr.superlink.artifact_provider import ArtifactProvider
+from flwr.superlink.auth_plugin import (
+    ControlAuthnPlugin,
+    ControlAuthzPlugin,
+    NoOpControlAuthnPlugin,
+)
 
+from .control_account_auth_interceptor import ControlAccountAuthInterceptor
 from .control_event_log_interceptor import ControlEventLogInterceptor
 from .control_license_interceptor import ControlLicenseInterceptor
 from .control_servicer import ControlServicer
-from .control_user_auth_interceptor import ControlUserAuthInterceptor
 
 try:
     from flwr.ee import get_license_plugin
 except ImportError:
 
-    def get_license_plugin() -> Optional[LicensePlugin]:
+    def get_license_plugin() -> LicensePlugin | None:
         """Return the license plugin."""
 
 
@@ -52,15 +55,16 @@ def run_control_api_grpc(
     state_factory: LinkStateFactory,
     ffs_factory: FfsFactory,
     objectstore_factory: ObjectStoreFactory,
-    certificates: Optional[tuple[bytes, bytes, bytes]],
+    certificates: tuple[bytes, bytes, bytes] | None,
     is_simulation: bool,
-    auth_plugin: Optional[ControlAuthPlugin] = None,
-    authz_plugin: Optional[ControlAuthzPlugin] = None,
-    event_log_plugin: Optional[EventLogWriterPlugin] = None,
-    artifact_provider: Optional[ArtifactProvider] = None,
+    authn_plugin: ControlAuthnPlugin,
+    authz_plugin: ControlAuthzPlugin,
+    event_log_plugin: EventLogWriterPlugin | None = None,
+    artifact_provider: ArtifactProvider | None = None,
+    fleet_api_type: str | None = None,
 ) -> grpc.Server:
     """Run Control API (gRPC, request-response)."""
-    license_plugin: Optional[LicensePlugin] = get_license_plugin()
+    license_plugin: LicensePlugin | None = get_license_plugin()
     if license_plugin and not license_plugin.check_license():
         flwr_exit(ExitCode.SUPERLINK_LICENSE_INVALID)
 
@@ -69,15 +73,14 @@ def run_control_api_grpc(
         ffs_factory=ffs_factory,
         objectstore_factory=objectstore_factory,
         is_simulation=is_simulation,
-        auth_plugin=auth_plugin,
+        authn_plugin=authn_plugin,
         artifact_provider=artifact_provider,
+        fleet_api_type=fleet_api_type,
     )
-    interceptors: list[grpc.ServerInterceptor] = []
+    interceptors = [ControlAccountAuthInterceptor(authn_plugin, authz_plugin)]
     if license_plugin is not None:
         interceptors.append(ControlLicenseInterceptor(license_plugin))
-    if auth_plugin is not None and authz_plugin is not None:
-        interceptors.append(ControlUserAuthInterceptor(auth_plugin, authz_plugin))
-    # Event log interceptor must be added after user auth interceptor
+    # Event log interceptor must be added after account auth interceptor
     if event_log_plugin is not None:
         interceptors.append(ControlEventLogInterceptor(event_log_plugin))
         log(INFO, "Flower event logging enabled")
@@ -90,12 +93,12 @@ def run_control_api_grpc(
         interceptors=interceptors or None,
     )
 
-    if auth_plugin is None:
+    if isinstance(authn_plugin, NoOpControlAuthnPlugin):
         log(INFO, "Flower Deployment Runtime: Starting Control API on %s", address)
     else:
         log(
             INFO,
-            "Flower Deployment Runtime: Starting Control API with user "
+            "Flower Deployment Runtime: Starting Control API with account "
             "authentication on %s",
             address,
         )

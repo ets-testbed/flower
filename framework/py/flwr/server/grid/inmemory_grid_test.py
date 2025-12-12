@@ -15,6 +15,7 @@
 """Tests for in-memory grid."""
 
 
+import secrets
 import time
 import unittest
 from collections.abc import Iterable
@@ -23,7 +24,7 @@ from uuid import uuid4
 
 from flwr.common import ConfigRecord, Message, RecordDict, now
 from flwr.common.constant import (
-    HEARTBEAT_MAX_INTERVAL,
+    HEARTBEAT_INTERVAL_INF,
     NODE_ID_NUM_BYTES,
     SUPERLINK_NODE_ID,
     Status,
@@ -37,6 +38,9 @@ from flwr.server.superlink.linkstate import (
 )
 from flwr.server.superlink.linkstate.linkstate_test import create_ins_message
 from flwr.server.superlink.linkstate.utils import generate_rand_int_from_bytes
+from flwr.supercore.constant import FLWR_IN_MEMORY_DB_NAME, NOOP_FEDERATION
+from flwr.supercore.object_store import ObjectStoreFactory
+from flwr.superlink.federation import NoOpFederationManager
 
 from .inmemory_grid import InMemoryGrid
 
@@ -44,7 +48,13 @@ from .inmemory_grid import InMemoryGrid
 def push_messages(grid: InMemoryGrid, num_nodes: int) -> tuple[Iterable[str], int]:
     """Help push messages to state."""
     for _ in range(num_nodes):
-        node_id = grid.state.create_node(heartbeat_interval=HEARTBEAT_MAX_INTERVAL)
+        node_id = grid.state.create_node(
+            "mock_owner",
+            "mock_account",
+            secrets.token_bytes(32),
+            heartbeat_interval=0,  # This field has no effect
+        )
+        grid.state.acknowledge_node_heartbeat(node_id, HEARTBEAT_INTERVAL_INF)
     num_messages = 3
     msgs = [Message(RecordDict(), node_id, "query") for _ in range(num_messages)]
 
@@ -93,6 +103,10 @@ class TestInMemoryGrid(unittest.TestCase):
             finished_at="",
             status=RunStatus(status=Status.PENDING, sub_status="", details=""),
             flwr_aid="user123",
+            federation="mock-fed",
+            bytes_sent=0,
+            bytes_recv=0,
+            clientapp_runtime=0.0,
         )
         state_factory = MagicMock(state=lambda: self.state)
         self.grid = InMemoryGrid(state_factory=state_factory)
@@ -188,8 +202,10 @@ class TestInMemoryGrid(unittest.TestCase):
     def test_message_store_consistency_after_push_pull_sqlitestate(self) -> None:
         """Test messages are deleted in sqlite state once messages are pulled."""
         # Prepare
-        state = LinkStateFactory("").state()
-        run_id = state.create_run("", "", "", {}, ConfigRecord(), "")
+        state = LinkStateFactory(
+            "", NoOpFederationManager(), ObjectStoreFactory()
+        ).state()
+        run_id = state.create_run("", "", "", {}, NOOP_FEDERATION, ConfigRecord(), "")
         self.grid = InMemoryGrid(MagicMock(state=lambda: state))
         self.grid.set_run(run_id=run_id)
         msg_ids, node_id = push_messages(self.grid, self.num_nodes)
@@ -214,9 +230,11 @@ class TestInMemoryGrid(unittest.TestCase):
     def test_message_store_consistency_after_push_pull_inmemory_state(self) -> None:
         """Test messages are deleted in in-memory state once messages are pulled."""
         # Prepare
-        state_factory = LinkStateFactory(":flwr-in-memory-state:")
+        state_factory = LinkStateFactory(
+            FLWR_IN_MEMORY_DB_NAME, NoOpFederationManager(), ObjectStoreFactory()
+        )
         state = state_factory.state()
-        run_id = state.create_run("", "", "", {}, ConfigRecord(), "")
+        run_id = state.create_run("", "", "", {}, NOOP_FEDERATION, ConfigRecord(), "")
         self.grid = InMemoryGrid(state_factory)
         self.grid.set_run(run_id=run_id)
         msg_ids, node_id = push_messages(self.grid, self.num_nodes)

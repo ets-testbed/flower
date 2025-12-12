@@ -2,11 +2,13 @@
 .. meta::
     :description: Deploy with the Flower Deployment Runtime using step-by-step guides on TLS, authentication, logging, Docker, Azure, and more for secure, scalable solutions.
 
-Deploy using the Flower Deployment Runtime
-==========================================
+############################################
+ Deploy using the Flower Deployment Runtime
+############################################
 
-How-to guides
--------------
+***************
+ How-to guides
+***************
 
 Problem-oriented how-to guides show step-by-step how to achieve a specific goal.
 
@@ -20,7 +22,9 @@ Problem-oriented how-to guides show step-by-step how to achieve a specific goal.
     how-to-run-flower-on-gcp
     how-to-run-flower-on-azure
     how-to-run-flower-on-red-hat-openshift
-    how-to-authenticate-users
+    how-to-run-flower-on-multiple-openshift-clusters
+    how-to-authenticate-accounts
     how-to-configure-audit-logging
+    how-to-manage-flower-federations
     docker/index
     helm/index

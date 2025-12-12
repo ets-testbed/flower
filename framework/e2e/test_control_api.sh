@@ -19,11 +19,9 @@ esac
 # Set authentication parameters
 case "$2" in
     client-auth)
-      server_auth='--auth-list-public-keys      ../keys/client_public_keys.csv'
-      client_auth_1='--auth-supernode-private-key ../keys/client_credentials_1 
-                     --auth-supernode-public-key  ../keys/client_credentials_1.pub'
-      client_auth_2='--auth-supernode-private-key ../keys/client_credentials_2 
-                     --auth-supernode-public-key  ../keys/client_credentials_2.pub'
+      server_auth='--enable-supernode-auth'
+      client_auth_1='--auth-supernode-private-key ../keys/client_credentials_1'
+      client_auth_2='--auth-supernode-private-key ../keys/client_credentials_2'
       server_address='127.0.0.1:9092'
       ;;
     *)
@@ -46,8 +44,8 @@ esac
 
 
 # Create and install Flower app
-flwr new e2e-tmp-test --framework numpy --username flwrlabs
-cd e2e-tmp-test
+flwr new @flwrlabs/numpy-ci
+cd numpy-ci
 # Remove flwr dependency from `pyproject.toml`. Seems necessary so that it does
 # not override the wheel dependency
 if [[ "$OSTYPE" == "darwin"* ]]; then
@@ -79,6 +77,12 @@ timeout 2m flower-superlink $combined_args &
 sl_pid=$(pgrep -f "flower-superlink")
 sleep 2
 
+if [ "$2" = "client-auth" ] && [ "$3" = "deployment-engine" ]; then
+  # Register two SuperNodes using the Flower CLI
+  flwr supernode register ../keys/client_credentials_1.pub ../numpy-ci e2e
+  flwr supernode register ../keys/client_credentials_2.pub ../numpy-ci e2e
+fi
+
 if [ "$3" = "deployment-engine" ]; then
   timeout 2m flower-supernode $client_arg \
       --superlink $server_address $client_auth_1 \
@@ -95,7 +99,7 @@ if [ "$3" = "deployment-engine" ]; then
   sleep 2
 fi
 
-timeout 1m flwr run --run-config num-server-rounds=1 ../e2e-tmp-test e2e
+timeout 1m flwr run --run-config num-server-rounds=1 ../numpy-ci e2e
 
 # Initialize a flag to track if training is successful
 found_success=false

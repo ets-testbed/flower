@@ -16,7 +16,6 @@
 
 
 # pylint: disable=R0913, R0917
-from typing import Optional
 
 import numpy as np
 
@@ -58,7 +57,10 @@ class ContinuousPartitioner(
     shuffle : bool
         Whether to shuffle the indices within each partition (default: True).
     seed : Optional[int]
-        Random seed for reproducibility.
+        Random seed for reproducibility. Used for initializing the random number generator (RNG),
+        which affects the generation of the Gaussian noise (related to the `strictness` parameter)
+        and dataset shuffling (if `shuffle` is True).
+
 
     Examples
     --------
@@ -107,7 +109,7 @@ class ContinuousPartitioner(
         partition_by: str,
         strictness: float,
         shuffle: bool = True,
-        seed: Optional[int] = 42,
+        seed: int | None = 42,
     ) -> None:
         super().__init__()
         if not 0 <= strictness <= 1:

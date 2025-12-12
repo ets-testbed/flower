@@ -1,5 +1,6 @@
-Secure Aggregation Protocols
-============================
+##############################
+ Secure Aggregation Protocols
+##############################
 
 .. note::
 
@@ -17,8 +18,9 @@ Flower now provides the ``SecAgg`` and ``SecAgg+`` protocols. While we plan to i
 more protocols in the future, one may also implement their own custom secure aggregation
 protocol via low-level APIs.
 
-The ``SecAgg+`` protocol in Flower
-----------------------------------
+************************************
+ The ``SecAgg+`` protocol in Flower
+************************************
 
 The ``SecAgg+`` protocol is implemented using the ``SecAggPlusWorkflow`` in the
 ``ServerApp`` and the ``secaggplus_mod`` in the ``ClientApp``. The ``SecAgg`` protocol
@@ -47,19 +49,14 @@ the ``ServerApp`` and the ``ClientApp`` is done via the ``SuperLink`` and the
 
         ServerApp->>SecAggPlusWorkflow: Invoke
 
-        rect rgb(235, 235, 235)
         note over SecAggPlusWorkflow,Mod: Stage 0: Setup
         SecAggPlusWorkflow-->>Mod: Send SecAgg+ configuration
         Mod-->>SecAggPlusWorkflow: Send public keys
-        end
 
-        rect rgb(220, 220, 220)
         note over SecAggPlusWorkflow,Mod: Stage 1: Share Keys
         SecAggPlusWorkflow-->>Mod: Broadcast public keys
         Mod-->>SecAggPlusWorkflow: Send encrypted private key shares
-        end
 
-        rect rgb(235, 235, 235)
         note over SecAggPlusWorkflow,ClientApp: Stage 2: Collect Masked Vectors
         SecAggPlusWorkflow-->>Mod: Forward the received shares
         Mod->>ClientApp: Fit instructions
@@ -67,12 +64,10 @@ the ``ServerApp`` and the ``ClientApp`` is done via the ``SuperLink`` and the
         ClientApp->>Mod: Updated model
         deactivate ClientApp
         Mod-->>SecAggPlusWorkflow: Send masked model parameters
-        end
 
-        rect rgb(220, 220, 220)
         note over SecAggPlusWorkflow,Mod: Stage 3: Unmask
         SecAggPlusWorkflow-->>Mod: Request private key shares
         Mod-->>SecAggPlusWorkflow: Send private key shares
-        end
+
         SecAggPlusWorkflow->>SecAggPlusWorkflow: Unmask aggregated model
         SecAggPlusWorkflow->>ServerApp: Aggregated model

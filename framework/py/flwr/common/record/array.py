@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any, cast, overload
 
 import numpy as np
 
-from ..constant import MAX_ARRAY_CHUNK_SIZE, SType
+from ..constant import FLWR_PRIVATE_MAX_ARRAY_CHUNK_SIZE, SType
 from ..inflatable import (
     InflatableObject,
     add_header_to_object_body,
@@ -117,15 +117,15 @@ class Array(InflatableObject):
     data: bytes
 
     @overload
-    def __init__(  # noqa: E704
+    def __init__(
         self, dtype: str, shape: tuple[int, ...], stype: str, data: bytes
     ) -> None: ...
 
     @overload
-    def __init__(self, ndarray: NDArray) -> None: ...  # noqa: E704
+    def __init__(self, ndarray: NDArray) -> None: ...
 
     @overload
-    def __init__(self, torch_tensor: torch.Tensor) -> None: ...  # noqa: E704
+    def __init__(self, torch_tensor: torch.Tensor) -> None: ...
 
     def __init__(  # pylint: disable=too-many-arguments, too-many-locals
         self,
@@ -272,8 +272,8 @@ class Array(InflatableObject):
         chunks: list[tuple[str, InflatableObject]] = []
         # memoryview allows for zero-copy slicing
         data_view = memoryview(self.data)
-        for start in range(0, len(data_view), MAX_ARRAY_CHUNK_SIZE):
-            end = min(start + MAX_ARRAY_CHUNK_SIZE, len(data_view))
+        for start in range(0, len(data_view), FLWR_PRIVATE_MAX_ARRAY_CHUNK_SIZE):
+            end = min(start + FLWR_PRIVATE_MAX_ARRAY_CHUNK_SIZE, len(data_view))
             ac = ArrayChunk(data_view[start:end])
             chunks.append((ac.object_id, ac))
 

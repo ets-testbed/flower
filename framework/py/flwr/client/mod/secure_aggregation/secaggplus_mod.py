@@ -35,14 +35,9 @@ from flwr.common.constant import MessageType
 from flwr.common.logger import log
 from flwr.common.secure_aggregation.crypto.shamir import create_shares
 from flwr.common.secure_aggregation.crypto.symmetric_encryption import (
-    bytes_to_private_key,
-    bytes_to_public_key,
     decrypt,
     encrypt,
-    generate_key_pairs,
     generate_shared_key,
-    private_key_to_bytes,
-    public_key_to_bytes,
 )
 from flwr.common.secure_aggregation.ndarrays_arithmetic import (
     factor_combine,
@@ -64,6 +59,13 @@ from flwr.common.secure_aggregation.secaggplus_utils import (
     share_keys_plaintext_separate,
 )
 from flwr.common.typing import ConfigRecordValues
+from flwr.supercore.primitives.asymmetric import (
+    bytes_to_private_key,
+    bytes_to_public_key,
+    generate_key_pairs,
+    private_key_to_bytes,
+    public_key_to_bytes,
+)
 
 
 @dataclass
@@ -110,9 +112,9 @@ class SecAggPlusState:
                     updated_values = [
                         tuple(values[i : i + 2]) for i in range(0, len(values), 2)
                     ]
-                    new_v = dict(zip(keys, updated_values))
+                    new_v = dict(zip(keys, updated_values, strict=True))
                 else:
-                    new_v = dict(zip(keys, values))
+                    new_v = dict(zip(keys, values, strict=True))
             self.__setattr__(k, new_v)
 
     def to_dict(self) -> dict[str, ConfigRecordValues]:
@@ -424,7 +426,7 @@ def _collect_masked_vectors(
         raise ValueError("Not enough available neighbour clients.")
 
     # Decrypt ciphertexts, verify their sources, and store shares.
-    for src, ciphertext in zip(srcs, ciphertexts):
+    for src, ciphertext in zip(srcs, ciphertexts, strict=True):
         shared_key = state.ss2_dict[src]
         plaintext = decrypt(shared_key, ciphertext)
         actual_src, dst, rd_seed_share, sk1_share = share_keys_plaintext_separate(

@@ -16,7 +16,6 @@
 
 
 import unittest
-from typing import Optional, Union
 from unittest.mock import MagicMock
 
 import grpc
@@ -32,8 +31,8 @@ from flwr.common.dummy_grpc_handlers_test import (
 from flwr.common.event_log_plugin import EventLogWriterPlugin
 from flwr.common.typing import AccountInfo, Actor, Event, LogEntry
 
+from .control_account_auth_interceptor import shared_account_info
 from .control_event_log_interceptor import ControlEventLogInterceptor
-from .control_user_auth_interceptor import shared_account_info
 
 
 class DummyLogPlugin(EventLogWriterPlugin):
@@ -46,7 +45,7 @@ class DummyLogPlugin(EventLogWriterPlugin):
         self,
         request: GrpcMessage,
         context: grpc.ServicerContext,
-        account_info: Optional[AccountInfo],
+        account_info: AccountInfo | None,
         method_name: str,
     ) -> LogEntry:
         """Compose pre-event log entry from the provided request and context."""
@@ -65,9 +64,9 @@ class DummyLogPlugin(EventLogWriterPlugin):
         self,
         request: GrpcMessage,
         context: grpc.ServicerContext,
-        account_info: Optional[AccountInfo],
+        account_info: AccountInfo | None,
         method_name: str,
-        response: Optional[Union[GrpcMessage, BaseException]],
+        response: GrpcMessage | BaseException | None,
     ) -> LogEntry:
         """Compose post-event log entry from the provided response and context."""
         return LogEntry(

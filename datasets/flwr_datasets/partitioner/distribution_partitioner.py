@@ -16,7 +16,6 @@
 
 
 from collections import Counter
-from typing import Optional, Union
 
 import numpy as np
 
@@ -97,7 +96,10 @@ class DistributionPartitioner(Partitioner):  # pylint: disable=R0902
         Whether to randomize the order of samples. Shuffling applied after the
         samples assignment to nodes.
     seed : int, default=42
-        Seed used for dataset shuffling. It has no effect if `shuffle` is False.
+        Seed used for initializing the random number generator (RNG),
+        which affects dataset shuffling (if `shuffle` is True)
+        and random assignment of any unassigned samples that resulted from
+        rounding errors during label rescaling (if `rescale` is True).
 
     Examples
     --------
@@ -157,14 +159,14 @@ class DistributionPartitioner(Partitioner):  # pylint: disable=R0902
 
     def __init__(  # pylint: disable=R0913, R0917
         self,
-        distribution_array: Union[NDArrayInt, NDArrayFloat],
+        distribution_array: NDArrayInt | NDArrayFloat,
         num_partitions: int,
         num_unique_labels_per_partition: int,
         partition_by: str,
         preassigned_num_samples_per_label: int,
         rescale: bool = True,
         shuffle: bool = True,
-        seed: Optional[int] = 42,
+        seed: int | None = 42,
     ) -> None:
         super().__init__()
         # Attributes based on the constructor
@@ -275,7 +277,7 @@ class DistributionPartitioner(Partitioner):  # pylint: disable=R0902
 
         # Create the label sampling dictionary
         label_samples = dict(
-            zip(unique_label_distribution.keys(), label_sampling_matrix)
+            zip(unique_label_distribution.keys(), label_sampling_matrix, strict=False)
         )
 
         # Create indices split from dataset
@@ -304,7 +306,7 @@ class DistributionPartitioner(Partitioner):  # pylint: disable=R0902
         # Values are the smallest indices of each array in `label_samples`
         # which will be sampled next. Once a sample is taken from a label/key,
         # increment the value (index) by 1.
-        index_tracker = {k: 0 for k in unique_labels}
+        index_tracker = dict.fromkeys(unique_labels, 0)
 
         # Prepare data structure to store indices assigned to partition ids
         self._partition_id_to_indices = {

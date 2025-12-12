@@ -16,19 +16,26 @@
 
 
 import abc
-from typing import Optional
+from collections.abc import Sequence
 
 from flwr.common import Context, Message
 from flwr.common.record import ConfigRecord
 from flwr.common.typing import Run, RunStatus, UserConfig
+from flwr.proto.node_pb2 import NodeInfo  # pylint: disable=E0611
 from flwr.supercore.corestate import CoreState
+from flwr.superlink.federation import FederationManager
 
 
 class LinkState(CoreState):  # pylint: disable=R0904
     """Abstract LinkState."""
 
+    @property
     @abc.abstractmethod
-    def store_message_ins(self, message: Message) -> Optional[str]:
+    def federation_manager(self) -> FederationManager:
+        """Return the FederationManager instance."""
+
+    @abc.abstractmethod
+    def store_message_ins(self, message: Message) -> str | None:
         """Store one Message.
 
         Usually, the ServerAppIo API calls this to schedule instructions.
@@ -46,7 +53,7 @@ class LinkState(CoreState):  # pylint: disable=R0904
         """
 
     @abc.abstractmethod
-    def get_message_ins(self, node_id: int, limit: Optional[int]) -> list[Message]:
+    def get_message_ins(self, node_id: int, limit: int | None) -> list[Message]:
         """Get zero or more `Message` objects for the provided `node_id`.
 
         Usually, the Fleet API calls this for Nodes planning to work on one or more
@@ -61,7 +68,7 @@ class LinkState(CoreState):  # pylint: disable=R0904
         """
 
     @abc.abstractmethod
-    def store_message_res(self, message: Message) -> Optional[str]:
+    def store_message_res(self, message: Message) -> str | None:
         """Store one Message.
 
         Usually, the Fleet API calls this for Nodes returning results.
@@ -128,12 +135,57 @@ class LinkState(CoreState):  # pylint: disable=R0904
         """Get all instruction Message IDs for the given run_id."""
 
     @abc.abstractmethod
-    def create_node(self, heartbeat_interval: float) -> int:
+    def create_node(
+        self,
+        owner_aid: str,
+        owner_name: str,
+        public_key: bytes,
+        heartbeat_interval: float,
+    ) -> int:
         """Create, store in the link state, and return `node_id`."""
 
     @abc.abstractmethod
-    def delete_node(self, node_id: int) -> None:
+    def delete_node(self, owner_aid: str, node_id: int) -> None:
         """Remove `node_id` from the link state."""
+
+    @abc.abstractmethod
+    def activate_node(self, node_id: int, heartbeat_interval: float) -> bool:
+        """Activate the node with the specified `node_id`.
+
+        Transitions the node status to "online". The transition will fail
+        if the current status is not "registered" or "offline".
+
+        Parameters
+        ----------
+        node_id : int
+            The identifier of the node to activate.
+        heartbeat_interval : float
+            The interval (in seconds) from the current timestamp within which
+            the next heartbeat from this node is expected to be received.
+
+        Returns
+        -------
+        bool
+            True if the status transition was successful, False otherwise.
+        """
+
+    @abc.abstractmethod
+    def deactivate_node(self, node_id: int) -> bool:
+        """Deactivate the node with the specified `node_id`.
+
+        Transitions the node status to "offline". The transition will fail
+        if the current status is not "online".
+
+        Parameters
+        ----------
+        node_id : int
+            The identifier of the node to deactivate.
+
+        Returns
+        -------
+        bool
+            True if the status transition was successful, False otherwise.
+        """
 
     @abc.abstractmethod
     def get_nodes(self, run_id: int) -> set[int]:
@@ -146,38 +198,124 @@ class LinkState(CoreState):  # pylint: disable=R0904
         """
 
     @abc.abstractmethod
-    def set_node_public_key(self, node_id: int, public_key: bytes) -> None:
-        """Set `public_key` for the specified `node_id`."""
+    def get_node_id_by_public_key(self, public_key: bytes) -> int | None:
+        """Get `node_id` for the specified `public_key` if it exists and is not deleted.
+
+        Parameters
+        ----------
+        public_key : bytes
+            The public key of the node whose information is to be retrieved.
+
+        Returns
+        -------
+        Optional[int]
+            The `node_id` associated with the specified `public_key` if it exists
+            and is not deleted; otherwise, `None`.
+        """
 
     @abc.abstractmethod
-    def get_node_public_key(self, node_id: int) -> Optional[bytes]:
-        """Get `public_key` for the specified `node_id`."""
+    def get_node_info(
+        self,
+        *,
+        node_ids: Sequence[int] | None = None,
+        owner_aids: Sequence[str] | None = None,
+        statuses: Sequence[str] | None = None,
+    ) -> Sequence[NodeInfo]:
+        """Retrieve information about nodes based on the specified filters.
+
+        If a filter is set to None, it is ignored.
+        If multiple filters are provided, they are combined using AND logic.
+
+        Parameters
+        ----------
+        node_ids : Optional[Sequence[int]] (default: None)
+            Sequence of node IDs to filter by. If a sequence is provided,
+            it is treated as an OR condition.
+        owner_aids : Optional[Sequence[str]] (default: None)
+            Sequence of owner account IDs to filter by. If a sequence is provided,
+            it is treated as an OR condition.
+        statuses : Optional[Sequence[str]] (default: None)
+            Sequence of node status values (e.g., "created", "activated")
+            to filter by. If a sequence is provided, it is treated as an OR condition.
+
+        Returns
+        -------
+        Sequence[NodeInfo]
+            A sequence of NodeInfo objects representing the nodes matching
+            the specified filters.
+        """
 
     @abc.abstractmethod
-    def get_node_id(self, node_public_key: bytes) -> Optional[int]:
-        """Retrieve stored `node_id` filtered by `node_public_keys`."""
+    def get_node_public_key(self, node_id: int) -> bytes:
+        """Get `public_key` for the specified `node_id`.
+
+        Parameters
+        ----------
+        node_id : int
+            The identifier of the node whose public key is to be retrieved.
+
+        Returns
+        -------
+        bytes
+            The public key associated with the specified `node_id`.
+
+        Raises
+        ------
+        ValueError
+            If the specified `node_id` does not exist in the link state.
+        """
 
     @abc.abstractmethod
     def create_run(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
-        fab_id: Optional[str],
-        fab_version: Optional[str],
-        fab_hash: Optional[str],
+        fab_id: str | None,
+        fab_version: str | None,
+        fab_hash: str | None,
         override_config: UserConfig,
+        federation: str,
         federation_options: ConfigRecord,
-        flwr_aid: Optional[str],
+        flwr_aid: str | None,
     ) -> int:
-        """Create a new run for the specified `fab_hash`."""
+        """Create a new run.
+
+        Parameters
+        ----------
+        fab_id : Optional[str]
+            The ID of the FAB, of format `<publisher>/<app-name>`.
+        fab_version : Optional[str]
+            The version of the FAB.
+        fab_hash : Optional[str]
+            The SHA256 hex hash of the FAB.
+        override_config : UserConfig
+            Configuration overrides for the run config.
+        federation : str
+            The federation this run belongs to.
+        federation_options : ConfigRecord
+            Federation configurations. For now, only `num-supernodes` for
+            the simulation runtime.
+        flwr_aid : Optional[str]
+            Flower Account ID of the creator.
+
+        Returns
+        -------
+        int
+            The run ID of the newly created run.
+
+        Notes
+        -----
+        This method will not verify if the account has permission to create
+        a run in the federation.
+        """
 
     @abc.abstractmethod
-    def get_run_ids(self, flwr_aid: Optional[str]) -> set[int]:
+    def get_run_ids(self, flwr_aid: str | None) -> set[int]:
         """Retrieve all run IDs if `flwr_aid` is not specified.
 
         Otherwise, retrieve all run IDs for the specified `flwr_aid`.
         """
 
     @abc.abstractmethod
-    def get_run(self, run_id: int) -> Optional[Run]:
+    def get_run(self, run_id: int) -> Run | None:
         """Retrieve information about the run with the specified `run_id`.
 
         Parameters
@@ -229,7 +367,7 @@ class LinkState(CoreState):  # pylint: disable=R0904
         """
 
     @abc.abstractmethod
-    def get_pending_run_id(self) -> Optional[int]:
+    def get_pending_run_id(self) -> int | None:
         """Get the `run_id` of a run with `Status.PENDING` status.
 
         Returns
@@ -240,7 +378,7 @@ class LinkState(CoreState):  # pylint: disable=R0904
         """
 
     @abc.abstractmethod
-    def get_federation_options(self, run_id: int) -> Optional[ConfigRecord]:
+    def get_federation_options(self, run_id: int) -> ConfigRecord | None:
         """Retrieve the federation options for the specified `run_id`.
 
         Parameters
@@ -253,22 +391,6 @@ class LinkState(CoreState):  # pylint: disable=R0904
         Optional[ConfigRecord]
             The federation options for the run if it exists; None otherwise.
         """
-
-    @abc.abstractmethod
-    def clear_supernode_auth_keys(self) -> None:
-        """Clear stored `node_public_keys` in the link state if any."""
-
-    @abc.abstractmethod
-    def store_node_public_keys(self, public_keys: set[bytes]) -> None:
-        """Store a set of `node_public_keys` in the link state."""
-
-    @abc.abstractmethod
-    def store_node_public_key(self, public_key: bytes) -> None:
-        """Store a `node_public_key` in the link state."""
-
-    @abc.abstractmethod
-    def get_node_public_keys(self) -> set[bytes]:
-        """Retrieve all currently stored `node_public_keys` as a set."""
 
     @abc.abstractmethod
     def acknowledge_node_heartbeat(
@@ -297,30 +419,7 @@ class LinkState(CoreState):  # pylint: disable=R0904
         """
 
     @abc.abstractmethod
-    def acknowledge_app_heartbeat(self, run_id: int, heartbeat_interval: float) -> bool:
-        """Acknowledge a heartbeat received from a ServerApp for a given run.
-
-        A run with status `"running"` is considered alive as long as it sends heartbeats
-        within the tolerated interval: HEARTBEAT_PATIENCE × heartbeat_interval.
-        HEARTBEAT_PATIENCE = N allows for N-1 missed heartbeat before the run is
-        marked as `"completed:failed"`.
-
-        Parameters
-        ----------
-        run_id : int
-            The `run_id` from which the heartbeat was received.
-        heartbeat_interval : float
-            The interval (in seconds) from the current timestamp within which the next
-            heartbeat from the ServerApp for this run must be received.
-
-        Returns
-        -------
-        is_acknowledged : bool
-            True if the heartbeat is successfully acknowledged; otherwise, False.
-        """
-
-    @abc.abstractmethod
-    def get_serverapp_context(self, run_id: int) -> Optional[Context]:
+    def get_serverapp_context(self, run_id: int) -> Context | None:
         """Get the context for the specified `run_id`.
 
         Parameters
@@ -361,7 +460,7 @@ class LinkState(CoreState):  # pylint: disable=R0904
 
     @abc.abstractmethod
     def get_serverapp_log(
-        self, run_id: int, after_timestamp: Optional[float]
+        self, run_id: int, after_timestamp: float | None
     ) -> tuple[str, float]:
         """Get the ServerApp logs for the specified `run_id`.
 
@@ -380,4 +479,36 @@ class LinkState(CoreState):  # pylint: disable=R0904
             - The ServerApp logs associated with the specified `run_id`.
             - The timestamp of the latest log entry in the returned logs.
               Returns `0` if no logs are returned.
+        """
+
+    @abc.abstractmethod
+    def store_traffic(self, run_id: int, *, bytes_sent: int, bytes_recv: int) -> None:
+        """Store traffic data for the specified `run_id`.
+
+        Parameters
+        ----------
+        run_id : int
+            The identifier of the run for which to store traffic data.
+        bytes_sent : int
+            The number of bytes pulled by SuperNodes from the SuperLink to add to the
+            run's total.
+        bytes_recv : int
+            The number of bytes received by SuperLink from SuperNodes to add to the
+            run's total.
+        """
+
+    @abc.abstractmethod
+    def add_clientapp_runtime(self, run_id: int, runtime: float) -> None:
+        """Add ClientApp runtime to the cumulative total for the specified `run_id`.
+
+        This method accumulates the runtime by adding the provided value to the
+        existing total runtime for the run. Multiple ClientApps can contribute
+        to the same run's total runtime.
+
+        Parameters
+        ----------
+        run_id : int
+            The identifier of the run for which to store each ClientApp's runtime.
+        runtime : float
+            The runtime in seconds to add to the `run_id`'s cumulative total.
         """

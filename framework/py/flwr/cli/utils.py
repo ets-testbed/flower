@@ -18,24 +18,29 @@
 import hashlib
 import json
 import re
-from collections.abc import Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, Optional, Union, cast
+from typing import Any, cast
 
 import grpc
+import pathspec
 import typer
 
-from flwr.cli.cli_user_auth_interceptor import CliUserAuthInterceptor
-from flwr.common.auth_plugin import CliAuthPlugin
 from flwr.common.constant import (
-    AUTH_TYPE_JSON_KEY,
+    ACCESS_TOKEN_KEY,
+    AUTHN_TYPE_JSON_KEY,
     CREDENTIALS_DIR,
     FLWR_DIR,
+    NO_ACCOUNT_AUTH_MESSAGE,
     NO_ARTIFACT_PROVIDER_MESSAGE,
-    NO_USER_AUTH_MESSAGE,
+    NODE_NOT_FOUND_MESSAGE,
+    PUBLIC_KEY_ALREADY_IN_USE_MESSAGE,
+    PUBLIC_KEY_NOT_VALID,
     PULL_UNFINISHED_RUN_MESSAGE,
+    REFRESH_TOKEN_KEY,
     RUN_ID_NOT_FOUND_MESSAGE,
+    AuthnType,
 )
 from flwr.common.grpc import (
     GRPC_MAX_MESSAGE_LENGTH,
@@ -43,16 +48,32 @@ from flwr.common.grpc import (
     on_channel_state_change,
 )
 
-from .auth_plugin import get_cli_auth_plugins
+from .auth_plugin import CliAuthPlugin, get_cli_plugin_class
+from .cli_account_auth_interceptor import CliAccountAuthInterceptor
 from .config_utils import validate_certificate_in_federation_config
 
 
 def prompt_text(
     text: str,
     predicate: Callable[[str], bool] = lambda _: True,
-    default: Optional[str] = None,
+    default: str | None = None,
 ) -> str:
-    """Ask user to enter text input."""
+    """Ask user to enter text input.
+
+    Parameters
+    ----------
+    text : str
+        The prompt text to display to the user.
+    predicate : Callable[[str], bool] (default: lambda _: True)
+        A function to validate the user input. Default accepts all non-empty strings.
+    default : str | None (default: None)
+        Default value to use if user presses enter without input.
+
+    Returns
+    -------
+    str
+        The validated user input.
+    """
     while True:
         result = typer.prompt(
             typer.style(f"\n💬 {text}", fg=typer.colors.MAGENTA, bold=True),
@@ -66,7 +87,20 @@ def prompt_text(
 
 
 def prompt_options(text: str, options: list[str]) -> str:
-    """Ask user to select one of the given options and return the selected item."""
+    """Ask user to select one of the given options and return the selected item.
+
+    Parameters
+    ----------
+    text : str
+        The prompt text to display to the user.
+    options : list[str]
+        List of options to present to the user.
+
+    Returns
+    -------
+    str
+        The selected option from the list.
+    """
     # Turn options into a list with index as in " [ 0] quickstart-pytorch"
     options_formatted = [
         " [ "
@@ -124,9 +158,19 @@ def is_valid_project_name(name: str) -> bool:
 def sanitize_project_name(name: str) -> str:
     """Sanitize the given string to make it a valid Python project name.
 
-    This version replaces spaces, dots, slashes, and underscores with dashes, removes
+    This function replaces spaces, dots, slashes, and underscores with dashes, removes
     any characters not allowed in Python project names, makes the string lowercase, and
     ensures it starts with a valid character.
+
+    Parameters
+    ----------
+    name : str
+        The project name to sanitize.
+
+    Returns
+    -------
+    str
+        The sanitized project name that is valid for Python projects.
     """
     # Replace whitespace with '_'
     name_with_hyphens = re.sub(r"[ ./_]", "-", name)
@@ -151,8 +195,19 @@ def sanitize_project_name(name: str) -> str:
     return sanitized_name
 
 
-def get_sha256_hash(file_path_or_int: Union[Path, int]) -> str:
-    """Calculate the SHA-256 hash of a file."""
+def get_sha256_hash(file_path_or_int: Path | int) -> str:
+    """Calculate the SHA-256 hash of a file or integer.
+
+    Parameters
+    ----------
+    file_path_or_int : Path | int
+        Either a path to a file to hash, or an integer to convert to string and hash.
+
+    Returns
+    -------
+    str
+        The SHA-256 hash as a hexadecimal string.
+    """
     sha256 = hashlib.sha256()
     if isinstance(file_path_or_int, Path):
         with open(file_path_or_int, "rb") as f:
@@ -166,8 +221,8 @@ def get_sha256_hash(file_path_or_int: Union[Path, int]) -> str:
     return sha256.hexdigest()
 
 
-def get_user_auth_config_path(root_dir: Path, federation: str) -> Path:
-    """Return the path to the user auth config file.
+def get_account_auth_config_path(root_dir: Path, federation: str) -> Path:
+    """Return the path to the account auth config file.
 
     Additionally, a `.gitignore` file will be created in the Flower directory to
     include the `.credentials` folder to be excluded from git. If the `.gitignore`
@@ -211,77 +266,134 @@ def get_user_auth_config_path(root_dir: Path, federation: str) -> Path:
             f"Please check the permissions of `{gitignore_path}` and try again.",
             fg=typer.colors.RED,
             bold=True,
+            err=True,
         )
         raise typer.Exit(code=1) from err
 
     return credentials_dir / f"{federation}.json"
 
 
-def try_obtain_cli_auth_plugin(
+def account_auth_enabled(federation_config: dict[str, Any]) -> bool:
+    """Check if account authentication is enabled in the federation config.
+
+    Parameters
+    ----------
+    federation_config : dict[str, Any]
+        The federation configuration dictionary.
+
+    Returns
+    -------
+    bool
+        True if account authentication is enabled, False otherwise.
+    """
+    enabled: bool = federation_config.get("enable-user-auth", False)
+    enabled |= federation_config.get("enable-account-auth", False)
+    if "enable-user-auth" in federation_config:
+        typer.secho(
+            "`enable-user-auth` is deprecated and will be removed in a future "
+            "release. Please use `enable-account-auth` instead.",
+            fg=typer.colors.YELLOW,
+            bold=True,
+        )
+    return enabled
+
+
+def retrieve_authn_type(config_path: Path) -> str:
+    """Retrieve the auth type from the config file or return NOOP if not found.
+
+    Parameters
+    ----------
+    config_path : Path
+        Path to the authentication configuration file.
+
+    Returns
+    -------
+    str
+        The authentication type string, or AuthnType.NOOP if not found.
+    """
+    try:
+        with config_path.open("r", encoding="utf-8") as file:
+            json_file = json.load(file)
+        authn_type: str = json_file[AUTHN_TYPE_JSON_KEY]
+        return authn_type
+    except (FileNotFoundError, KeyError):
+        return AuthnType.NOOP
+
+
+def load_cli_auth_plugin(
     root_dir: Path,
     federation: str,
     federation_config: dict[str, Any],
-    auth_type: Optional[str] = None,
-) -> Optional[CliAuthPlugin]:
-    """Load the CLI-side user auth plugin for the given auth type."""
-    # Check if user auth is enabled
-    if not federation_config.get("enable-user-auth", False):
-        return None
+    authn_type: str | None = None,
+) -> CliAuthPlugin:
+    """Load the CLI-side account auth plugin for the given authn type.
 
-    config_path = get_user_auth_config_path(root_dir, federation)
+    Parameters
+    ----------
+    root_dir : Path
+        Root directory of the Flower project.
+    federation : str
+        Name of the federation.
+    federation_config : dict[str, Any]
+        Federation configuration dictionary.
+    authn_type : str | None
+        Authentication type. If None, will be determined from config.
 
-    # Get the auth type from the config if not provided
-    # auth_type will be None for all CLI commands except login
-    if auth_type is None:
-        try:
-            with config_path.open("r", encoding="utf-8") as file:
-                json_file = json.load(file)
-            auth_type = json_file[AUTH_TYPE_JSON_KEY]
-        except (FileNotFoundError, KeyError):
-            typer.secho(
-                "❌ Missing or invalid credentials for user authentication. "
-                "Please run `flwr login` to authenticate.",
-                fg=typer.colors.RED,
-                bold=True,
-            )
-            raise typer.Exit(code=1) from None
+    Returns
+    -------
+    CliAuthPlugin
+        The loaded authentication plugin instance.
+
+    Raises
+    ------
+    typer.Exit
+        If the authentication type is unknown.
+    """
+    # Find the path to the account auth config file
+    config_path = get_account_auth_config_path(root_dir, federation)
+
+    # Determine the auth type if not provided
+    # Only `flwr login` command can provide `authn_type` explicitly, as it can query the
+    # SuperLink for the auth type.
+    if authn_type is None:
+        authn_type = AuthnType.NOOP
+        if account_auth_enabled(federation_config):
+            authn_type = retrieve_authn_type(config_path)
 
     # Retrieve auth plugin class and instantiate it
     try:
-        all_plugins: dict[str, type[CliAuthPlugin]] = get_cli_auth_plugins()
-        auth_plugin_class = all_plugins[auth_type]
+        auth_plugin_class = get_cli_plugin_class(authn_type)
         return auth_plugin_class(config_path)
-    except KeyError:
-        typer.echo(f"❌ Unknown user authentication type: {auth_type}")
-        raise typer.Exit(code=1) from None
-    except ImportError:
-        typer.echo("❌ No authentication plugins are currently supported.")
+    except ValueError:
+        typer.echo(f"❌ Unknown account authentication type: {authn_type}")
         raise typer.Exit(code=1) from None
 
 
 def init_channel(
-    app: Path, federation_config: dict[str, Any], auth_plugin: Optional[CliAuthPlugin]
+    app: Path, federation_config: dict[str, Any], auth_plugin: CliAuthPlugin
 ) -> grpc.Channel:
-    """Initialize gRPC channel to the Control API."""
+    """Initialize gRPC channel to the Control API.
+
+    Parameters
+    ----------
+    app : Path
+        Path to the Flower app directory.
+    federation_config : dict[str, Any]
+        Federation configuration dictionary containing address and TLS settings.
+    auth_plugin : CliAuthPlugin
+        Authentication plugin instance for handling credentials.
+
+    Returns
+    -------
+    grpc.Channel
+        Configured gRPC channel with authentication interceptors.
+    """
     insecure, root_certificates_bytes = validate_certificate_in_federation_config(
         app, federation_config
     )
 
-    # Initialize the CLI-side user auth interceptor
-    interceptors: list[grpc.UnaryUnaryClientInterceptor] = []
-    if auth_plugin is not None:
-        # Check if TLS is enabled. If not, raise an error
-        if insecure:
-            typer.secho(
-                "❌ User authentication requires TLS to be enabled. "
-                "Remove `insecure = true` from the federation configuration.",
-                fg=typer.colors.RED,
-                bold=True,
-            )
-            raise typer.Exit(code=1)
-
-        auth_plugin.load_tokens()
-        interceptors.append(CliUserAuthInterceptor(auth_plugin))
+    # Load tokens
+    auth_plugin.load_tokens()
 
     # Create the gRPC channel
     channel = create_channel(
@@ -289,19 +401,32 @@ def init_channel(
         insecure=insecure,
         root_certificates=root_certificates_bytes,
         max_message_length=GRPC_MAX_MESSAGE_LENGTH,
-        interceptors=interceptors or None,
+        interceptors=[CliAccountAuthInterceptor(auth_plugin)],
     )
     channel.subscribe(on_channel_state_change)
     return channel
 
 
 @contextmanager
-def flwr_cli_grpc_exc_handler() -> Iterator[None]:
+def flwr_cli_grpc_exc_handler() -> Iterator[None]:  # pylint: disable=too-many-branches
     """Context manager to handle specific gRPC errors.
 
-    It catches grpc.RpcError exceptions with UNAUTHENTICATED, UNIMPLEMENTED,
-    UNAVAILABLE, and PERMISSION_DENIED statuses, informs the user, and exits the
-    application. All other exceptions will be allowed to escape.
+    Catches grpc.RpcError exceptions with UNAUTHENTICATED, UNIMPLEMENTED,
+    UNAVAILABLE, PERMISSION_DENIED, NOT_FOUND, and FAILED_PRECONDITION statuses,
+    informs the user, and exits the application. All other exceptions will be
+    allowed to escape.
+
+    Yields
+    ------
+    None
+        Context manager yields nothing.
+
+    Raises
+    ------
+    typer.Exit
+        On handled gRPC error statuses with appropriate exit code.
+    grpc.RpcError
+        For unhandled gRPC error statuses.
     """
     try:
         yield
@@ -312,20 +437,23 @@ def flwr_cli_grpc_exc_handler() -> Iterator[None]:
                 " to authenticate and try again.",
                 fg=typer.colors.RED,
                 bold=True,
+                err=True,
             )
             raise typer.Exit(code=1) from None
         if e.code() == grpc.StatusCode.UNIMPLEMENTED:
-            if e.details() == NO_USER_AUTH_MESSAGE:  # pylint: disable=E1101
+            if e.details() == NO_ACCOUNT_AUTH_MESSAGE:  # pylint: disable=E1101
                 typer.secho(
-                    "❌ User authentication is not enabled on this SuperLink.",
+                    "❌ Account authentication is not enabled on this SuperLink.",
                     fg=typer.colors.RED,
                     bold=True,
+                    err=True,
                 )
             elif e.details() == NO_ARTIFACT_PROVIDER_MESSAGE:  # pylint: disable=E1101
                 typer.secho(
                     "❌ The SuperLink does not support `flwr pull` command.",
                     fg=typer.colors.RED,
                     bold=True,
+                    err=True,
                 )
             else:
                 typer.secho(
@@ -335,6 +463,7 @@ def flwr_cli_grpc_exc_handler() -> Iterator[None]:
                     "the CLI and SuperLink are compatible.",
                     fg=typer.colors.RED,
                     bold=True,
+                    err=True,
                 )
             raise typer.Exit(code=1) from None
         if e.code() == grpc.StatusCode.PERMISSION_DENIED:
@@ -342,6 +471,7 @@ def flwr_cli_grpc_exc_handler() -> Iterator[None]:
                 "❌ Permission denied.",
                 fg=typer.colors.RED,
                 bold=True,
+                err=True,
             )
             # pylint: disable-next=E1101
             typer.secho(e.details(), fg=typer.colors.RED, bold=True)
@@ -352,18 +482,26 @@ def flwr_cli_grpc_exc_handler() -> Iterator[None]:
                 "connection and 'address' in the federation configuration.",
                 fg=typer.colors.RED,
                 bold=True,
+                err=True,
             )
             raise typer.Exit(code=1) from None
-        if (
-            e.code() == grpc.StatusCode.NOT_FOUND
-            and e.details() == RUN_ID_NOT_FOUND_MESSAGE  # pylint: disable=E1101
-        ):
-            typer.secho(
-                "❌ Run ID not found.",
-                fg=typer.colors.RED,
-                bold=True,
-            )
-            raise typer.Exit(code=1) from None
+        if e.code() == grpc.StatusCode.NOT_FOUND:
+            if e.details() == RUN_ID_NOT_FOUND_MESSAGE:  # pylint: disable=E1101
+                typer.secho(
+                    "❌ Run ID not found.",
+                    fg=typer.colors.RED,
+                    bold=True,
+                    err=True,
+                )
+                raise typer.Exit(code=1) from None
+            if e.details() == NODE_NOT_FOUND_MESSAGE:  # pylint: disable=E1101
+                typer.secho(
+                    "❌ Node ID not found for this account.",
+                    fg=typer.colors.RED,
+                    bold=True,
+                    err=True,
+                )
+                raise typer.Exit(code=1) from None
         if e.code() == grpc.StatusCode.FAILED_PRECONDITION:
             if e.details() == PULL_UNFINISHED_RUN_MESSAGE:  # pylint: disable=E1101
                 typer.secho(
@@ -371,6 +509,114 @@ def flwr_cli_grpc_exc_handler() -> Iterator[None]:
                     "the run is finished. You can check the run status with `flwr ls`.",
                     fg=typer.colors.RED,
                     bold=True,
+                    err=True,
                 )
                 raise typer.Exit(code=1) from None
+            if (
+                e.details() == PUBLIC_KEY_ALREADY_IN_USE_MESSAGE
+            ):  # pylint: disable=E1101
+                typer.secho(
+                    "❌ The provided public key is already in use by another "
+                    "SuperNode.",
+                    fg=typer.colors.RED,
+                    bold=True,
+                    err=True,
+                )
+                raise typer.Exit(code=1) from None
+            if e.details() == PUBLIC_KEY_NOT_VALID:  # pylint: disable=E1101
+                typer.secho(
+                    "❌ The provided public key is invalid. Please provide a valid "
+                    "NIST EC public key.",
+                    fg=typer.colors.RED,
+                    bold=True,
+                    err=True,
+                )
+                raise typer.Exit(code=1) from None
+
+            # Log details from grpc error directly
+            typer.secho(
+                f"❌ {e.details()}",
+                fg=typer.colors.RED,
+                bold=True,
+                err=True,
+            )
+            raise typer.Exit(code=1) from None
         raise
+
+
+def build_pathspec(patterns: Iterable[str]) -> pathspec.PathSpec:
+    """Build a PathSpec from a list of GitIgnore-style patterns.
+
+    Parameters
+    ----------
+    patterns : Iterable[str]
+        Iterable of GitIgnore-style pattern strings.
+
+    Returns
+    -------
+    pathspec.PathSpec
+        Compiled PathSpec object for pattern matching.
+    """
+    return pathspec.PathSpec.from_lines("gitwildmatch", patterns)
+
+
+def load_gitignore_patterns(file: Path | bytes) -> list[str]:
+    """Load gitignore patterns from .gitignore file bytes.
+
+    Parameters
+    ----------
+    file : Path | bytes
+        The path to a .gitignore file or its bytes content.
+
+    Returns
+    -------
+    list[str]
+        List of gitignore patterns.
+        Returns empty list if content can't be decoded or the file does not exist.
+    """
+    try:
+        if isinstance(file, Path):
+            content = file.read_text(encoding="utf-8")
+        else:
+            content = file.decode("utf-8")
+        patterns = [
+            line.strip()
+            for line in content.splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        ]
+        return patterns
+    except (UnicodeDecodeError, OSError):
+        return []
+
+
+def validate_credentials_content(creds_path: Path) -> str:
+    """Load and validate the credentials file content.
+
+    Ensures required keys exist:
+      - AUTHN_TYPE_JSON_KEY
+      - ACCESS_TOKEN_KEY
+      - REFRESH_TOKEN_KEY
+    """
+    try:
+        creds: dict[str, str] = json.loads(creds_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as err:
+        typer.secho(
+            f"Invalid credentials file at '{creds_path}': {err}",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=1) from err
+
+    required_keys = [AUTHN_TYPE_JSON_KEY, ACCESS_TOKEN_KEY, REFRESH_TOKEN_KEY]
+    missing = [key for key in required_keys if key not in creds]
+
+    if missing:
+        typer.secho(
+            f"Credentials file '{creds_path}' is missing "
+            f"required key(s): {', '.join(missing)}. Please log in again.",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    return creds[ACCESS_TOKEN_KEY]

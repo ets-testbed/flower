@@ -2,11 +2,13 @@
 .. meta::
     :description: Learn how to build Flower apps with step-by-step guides on installation, configuration, strategy implementation, model checkpoints, and more.
 
-Build Flower apps
-=================
+###################
+ Build Flower apps
+###################
 
-How-to guides
--------------
+***************
+ How-to guides
+***************
 
 Problem-oriented how-to guides show step-by-step how to achieve a specific goal.
 
@@ -25,6 +27,7 @@ Problem-oriented how-to guides show step-by-step how to achieve a specific goal.
     how-to-use-differential-privacy
     how-to-implement-fedbn
     how-to-use-cli-json-output
+    how-to-migrate-from-openfl
     how-to-upgrade-to-flower-1.0
     how-to-upgrade-to-flower-1.13
     how-to-upgrade-to-message-api
