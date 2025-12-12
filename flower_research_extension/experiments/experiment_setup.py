@@ -104,16 +104,20 @@ def _evaluate_fn_factory(
     return evaluate_fn
 
 
+
 def build_experiment(args):
     suppress_warnings()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    init_params = ndarrays_to_parameters(get_parameters(Net()))
 
     provider = DATASETS.get(getattr(args, "dataset", "cifar10"))
     dataset_root = getattr(args, "dataset_root", "data")
     batch_size = getattr(args, "batch_size", 64)
     seed = getattr(args, "seed", 42)
+
+    num_classes = int(getattr(provider, "num_classes", 10))
+    model = args.model_builder(num_classes).to(device)
+    init_params = ndarrays_to_parameters(get_parameters(model))
 
     client_app = ClientApp(
         client_fn=build_client_fn(
@@ -123,6 +127,7 @@ def build_experiment(args):
             device=device,
             batch_size=batch_size,
             seed=seed,
+            model_builder=args.model_builder
         )
     )
 

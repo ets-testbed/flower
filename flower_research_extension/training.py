@@ -5,6 +5,8 @@ import numpy as np
 import torch
 from sklearn.metrics import precision_score, recall_score, f1_score
 from torch.utils.data import DataLoader
+from typing import Callable, Optional
+import torch.nn as nn
 
 from flower_research_extension.model import Net, set_parameters
 from flower_research_extension.data_files.base import PartitionSpec
@@ -12,6 +14,18 @@ from flower_research_extension.data_files.base import PartitionSpec
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 NUM_PARTITIONS = 20  # kept for backward-compat with your original evaluate()
 
+
+
+
+def _build_model(
+    *,
+    provider=None,
+    model_builder: Optional[Callable[[int], nn.Module]] = None,
+) -> nn.Module:
+    num_classes = int(getattr(provider, "num_classes", 10)) if provider is not None else 10
+    if model_builder is not None:
+        return model_builder(num_classes)
+    return Net(num_classes=num_classes)
 
 def fit_config(server_round: int) -> Dict:
     return {
@@ -45,7 +59,8 @@ def _compute_classification_metrics(
         for images, labels in _iter_batches(testloader):
             images, labels = images.to(device), labels.to(device)
             outputs = model(images)
-            total_loss += criterion(outputs, labels).item()
+            loss_batch = criterion(outputs, labels)  # mean over batch by default
+            total_loss += float(loss_batch.item()) * labels.size(0)
 
             preds = outputs.argmax(dim=1)
             y_true.extend(labels.cpu().numpy())
@@ -74,18 +89,6 @@ def _compute_classification_metrics(
     return float(loss), metrics
 
 
-# ----- Original CIFAR-10–specific evaluate (kept intact) -----------------------
-from flower_research_extension.data_files.cifar10 import load_cifar10_partition  # noqa: E402
-
-
-def evaluate(parameters, device=DEVICE) -> Tuple[float, Dict]:
-    model = Net().to(device)
-    set_parameters(model, parameters)
-    _, testloader = load_cifar10_partition(0, NUM_PARTITIONS)
-
-    return _compute_classification_metrics(model, testloader, device)
-
-
 # ----- New: provider-aware evaluate (works for any registered dataset) ---------
 def evaluate_with_provider(
     parameters_ndarrays: Any,
@@ -95,12 +98,11 @@ def evaluate_with_provider(
     device: torch.device = DEVICE,
     batch_size: int = 128,
     seed: int = 42,
+    model_builder=None,
 ) -> Tuple[float, Dict]:
-    """Evaluate global params on the provider's test set (any dataset)."""
-    model = Net().to(device)
+    model = _build_model(provider=provider, model_builder=model_builder).to(device)
     set_parameters(model, parameters_ndarrays)
 
-    # Single logical partition for evaluation; no shuffling
     spec = PartitionSpec(
         partition_id=0,
         num_partitions=1,
@@ -111,3 +113,4 @@ def evaluate_with_provider(
     _, _, testloader = provider.partition(Path(dataset_root), spec)
 
     return _compute_classification_metrics(model, testloader, device)
+

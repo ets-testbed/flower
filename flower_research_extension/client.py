@@ -109,32 +109,35 @@ def _cid_to_partition(cid_str: str, num_active: int) -> int:
 
 def _patch_num_classes(model: nn.Module, num_classes: int) -> nn.Module:
     """Replace the final classification layer to match num_classes when possible."""
-    # fc pattern (ResNet-like or your Net with .fc)
+
+    # Your custom Net: fc3
+    if hasattr(model, "fc3") and isinstance(getattr(model, "fc3"), nn.Linear):
+        if model.fc3.out_features != num_classes:
+            model.fc3 = nn.Linear(model.fc3.in_features, num_classes)
+        return model
+
+    # Common: .fc (ResNet-like)
     if hasattr(model, "fc") and isinstance(model.fc, nn.Linear):
         if model.fc.out_features != num_classes:
-            in_f = model.fc.in_features
-            model.fc = nn.Linear(in_f, num_classes)
+            model.fc = nn.Linear(model.fc.in_features, num_classes)
         return model
 
-    # classifier as Linear
+    # Common: .classifier as Linear
     if hasattr(model, "classifier") and isinstance(model.classifier, nn.Linear):
         if model.classifier.out_features != num_classes:
-            in_f = model.classifier.in_features
-            model.classifier = nn.Linear(in_f, num_classes)
+            model.classifier = nn.Linear(model.classifier.in_features, num_classes)
         return model
 
-    # classifier as Sequential -> replace last Linear
+    # Common: .classifier as Sequential -> replace last Linear
     if hasattr(model, "classifier") and isinstance(model.classifier, nn.Sequential):
-        seq = model.classifier
-        for i in reversed(range(len(seq))):
-            if isinstance(seq[i], nn.Linear):
-                if seq[i].out_features != num_classes:
-                    in_f = seq[i].in_features
-                    seq[i] = nn.Linear(in_f, num_classes)
+        for i in reversed(range(len(model.classifier))):
+            if isinstance(model.classifier[i], nn.Linear):
+                if model.classifier[i].out_features != num_classes:
+                    model.classifier[i] = nn.Linear(model.classifier[i].in_features, num_classes)
                 return model
 
-    # Fallback: if nothing found, leave as-is (dataset providers should adapt)
     return model
+
 
 
 def build_client_fn(
@@ -168,13 +171,19 @@ def build_client_fn(
         )
         loaders = provider.partition(dataset_root, spec)
 
-        if model_builder:
-            model = model_builder(provider.num_classes)
-        else:
-            model = Net()  # no kwargs; your Net doesn't accept num_classes
-            model = _patch_num_classes(model, provider.num_classes)
+        num_classes = int(getattr(provider, "num_classes", 10))
 
-        # Return true Client (avoid deprecation warnings)
+        if model_builder:
+            model = model_builder(num_classes)
+        else:
+            # Preferred: build correctly from the start
+            try:
+                model = Net(num_classes=num_classes)
+            except TypeError:
+                # Backward compatibility if Net signature wasn't updated
+                model = Net()
+                model = _patch_num_classes(model, num_classes)
+
         return _DLClient(model=model, device=device, loaders=loaders).to_client()
 
     def client_fn(context_or_cid):

@@ -3,6 +3,9 @@ import re
 
 from flower_research_extension.experiments.experiment_setup import run_experiment
 from flower_research_extension.data_files import REGISTRY as _REGISTRY
+from typing import Callable
+import torch.nn as nn
+from flower_research_extension.model import Net
 
 
 def _sanitize(name: str) -> str:
@@ -19,22 +22,33 @@ def _auto_run_name(dataset: str, num_rounds: int, num_partitions: int, batch_siz
     return _sanitize(f"{base}_{suffix}")
 
 
+def get_model_builder(model_name: str) -> Callable[[int], nn.Module]:
+    if model_name == "net":
+        return lambda num_classes: Net(num_classes=num_classes)
+    # elif model_name == "resnet18":
+    #     return lambda num_classes: _make_resnet18(num_classes)
+    raise ValueError(f"Unknown model: {model_name}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Run a Flower federated learning experiment with configurable parameters."
     )
-    parser.add_argument("--dataset", type=str, default="cifar10",
+    parser.add_argument("--dataset", type=str, default="svhn",
                         choices=_REGISTRY.available(),
                         help="Dataset to use")
     parser.add_argument("--dataset_root", type=str, default="data",
                         help="Dataset root directory")
+    parser.add_argument("--model", type=str, default="net", choices=["net", "resnet18"], help="Model architecture", )
     parser.add_argument("--batch_size", type=int, default=64, help="Batch size per client")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for partitioning")
 
     parser.add_argument("--num_rounds", type=int, default=10, help="Total number of federated rounds")
     parser.add_argument("--num_partitions", type=int, default=10, help="Number of simulated clients")
-    parser.add_argument("--fraction_fit", type=float, default=0.25, help="Fraction of clients used for training each round")
-    parser.add_argument("--min_fit_clients", type=int, default=3, help="Minimum number of clients to sample for training")
+    parser.add_argument("--fraction_fit", type=float, default=0.25,
+                        help="Fraction of clients used for training each round")
+    parser.add_argument("--min_fit_clients", type=int, default=3,
+                        help="Minimum number of clients to sample for training")
     parser.add_argument("--min_evaluate_clients", type=int, default=3,
                         help="Minimum number of clients to sample for evaluation")
     parser.add_argument("--client_cpu", type=int, default=1, help="Number of CPUs per client for simulation backend")
@@ -62,6 +76,7 @@ def main():
             fraction_fit=args.fraction_fit,
         )
 
+    args.model_builder = get_model_builder(args.model)
     run_experiment(args)
 
 
