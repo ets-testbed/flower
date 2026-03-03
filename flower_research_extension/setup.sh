@@ -1,28 +1,39 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+set -euo pipefail
 
-# Step 1: Go to the root of the repository (2 levels up from current file location)
-cd "$(dirname "$0")/../"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+EXT_ROOT="$SCRIPT_DIR"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+VENV_DIR="$EXT_ROOT/.venv"
 
-echo "Current working directory: $(pwd)"
+echo "Detected OS: $(uname -s)"
+echo "Extension root: $EXT_ROOT"
 
-# Step 2: Set up virtual environment
-echo "Creating virtual environment..."
-python3 -m venv venv
-source venv/bin/activate
+if [[ "$(uname -s)" == "Windows_NT" ]]; then
+  echo "Use setup.ps1 on Windows."
+  exit 1
+fi
 
-echo "Installing core Flower simulation dependencies..."
-pip install --upgrade pip
-pip install -e framework[simulation]
-pip install -e ./datasets
+echo "Creating virtual environment at $VENV_DIR"
+python3 -m venv "$VENV_DIR"
 
-echo "Installing PyTorch (CUDA 12.1)..."
-pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+# shellcheck disable=SC1091
+source "$VENV_DIR/bin/activate"
 
-echo "Installing other dependencies..."
-pip install wandb scikit-learn
+python -m pip install --upgrade pip setuptools wheel
 
-echo "✅ Setup complete. Now run:"
-echo "   source venv/bin/activate"
-echo "   python -m flower_research_extension.experiments.run_experiment"
+if [[ -d "$REPO_ROOT/framework" ]]; then
+  echo "Installing local Flower framework from $REPO_ROOT/framework"
+  python -m pip install -e "$REPO_ROOT/framework[simulation]"
+else
+  echo "Installing Flower from PyPI"
+  python -m pip install "flwr[simulation]>=1.5.0"
+fi
+
+python -m pip install -r "$EXT_ROOT/requirements.txt"
+python -m pip install -e "$EXT_ROOT"
+
+echo "Setup complete."
+echo "Activate with: source $VENV_DIR/bin/activate"
+echo "Run with: python -m flower_research_extension.experiments.run_experiment"
 

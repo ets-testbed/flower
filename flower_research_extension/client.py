@@ -11,6 +11,7 @@ from flwr.client import NumPyClient, Client
 
 from flower_research_extension.model import Net, get_parameters, set_parameters
 from flower_research_extension.data_files.base import PartitionSpec
+from flower_research_extension.utils.reproducibility import seed_everything
 
 
 class _DLClient(NumPyClient):
@@ -26,6 +27,9 @@ class _DLClient(NumPyClient):
         self.device = device
         self.train_dl, self.val_dl, self.test_dl = loaders
         self.criterion = nn.CrossEntropyLoss()  # classification default
+        self._has_batchnorm = any(
+            isinstance(module, nn.modules.batchnorm._BatchNorm) for module in self.model.modules()
+        )
 
     def get_parameters(self, config: Dict[str, Any]):
         return get_parameters(self.model)
@@ -43,6 +47,13 @@ class _DLClient(NumPyClient):
         for _ in range(local_epochs):
             for xb, yb in self.train_dl:
                 xb, yb = xb.to(self.device, non_blocking=True), yb.to(self.device, non_blocking=True)
+                small_batch_with_bn = self._has_batchnorm and int(yb.size(0)) < 2
+                if small_batch_with_bn:
+                    # BatchNorm layers require >1 value/channel in train mode.
+                    # For tiny tail batches, use eval mode for a stable forward/backward step.
+                    self.model.eval()
+                else:
+                    self.model.train()
                 optimizer.zero_grad(set_to_none=True)
                 logits = self.model(xb)
                 loss = self.criterion(logits, yb)
@@ -54,6 +65,8 @@ class _DLClient(NumPyClient):
                     preds = logits.argmax(dim=1)
                     total_correct += int((preds == yb).sum().item())
                     total_seen += int(yb.size(0))
+                if small_batch_with_bn:
+                    self.model.train()
 
         avg_loss = total_loss / max(1, total_seen)
         avg_acc = total_correct / max(1, total_seen)
@@ -148,6 +161,13 @@ def build_client_fn(
     device: torch.device,
     batch_size: int = 64,
     seed: int = 42,
+    distribution: str = "iid",
+    dirichlet_alpha: float = 0.5,
+    label_skew_classes: int = 2,
+    shard_num_shards_per_partition: int = 2,
+    inner_dirichlet_alpha: float = 0.5,
+    size_partition_weights: Optional[Tuple[float, ...]] = None,
+    distribution_matrix: Optional[Tuple[Tuple[float, ...], ...]] = None,
     model_builder: Optional[Callable[[int], nn.Module]] = None,
 ) -> Callable[..., Client]:
     """
@@ -163,11 +183,20 @@ def build_client_fn(
     active_partitions = max(1, min(num_partitions, train_size))
 
     def _make_client(pid: int) -> Client:
+        # Seed each client deterministically to improve run-to-run reproducibility.
+        seed_everything(seed + pid)
         spec = PartitionSpec(
             partition_id=pid,
             num_partitions=active_partitions,
             batch_size=batch_size,
             seed=seed,
+            distribution=distribution,
+            dirichlet_alpha=dirichlet_alpha,
+            label_skew_classes=label_skew_classes,
+            shard_num_shards_per_partition=shard_num_shards_per_partition,
+            inner_dirichlet_alpha=inner_dirichlet_alpha,
+            size_partition_weights=size_partition_weights,
+            distribution_matrix=distribution_matrix,
         )
         loaders = provider.partition(dataset_root, spec)
 

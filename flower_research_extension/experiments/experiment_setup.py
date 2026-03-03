@@ -1,9 +1,9 @@
 import warnings
 from typing import List, Tuple, Dict, Any
 import inspect
+import importlib
+import logging
 
-import datasets
-from datasets import logging as hf_logging
 import torch
 
 from flwr.simulation import run_simulation
@@ -14,14 +14,16 @@ from flwr.server.strategy import FedAvg
 
 from flower_research_extension.strategies.hooked_strategy import HookedStrategy
 from flower_research_extension.strategies.round_timer import RoundTimerStrategy
-from flower_research_extension.plugins.wandb_logger import WandBLogger
 from flower_research_extension.plugins.base import MetricsPlugin
-from flower_research_extension.model import Net, get_parameters
+from flower_research_extension.model import get_parameters
 from flower_research_extension.client import build_client_fn
 from flower_research_extension.data_files import REGISTRY as DATASETS
+from flower_research_extension.utils.reproducibility import seed_everything
 
 # Use your original fit_config, and the new provider-aware evaluate
-from flower_research_extension.training import fit_config as training_fit_config, evaluate_with_provider
+from flower_research_extension.training import evaluate_with_provider
+
+logger = logging.getLogger(__name__)
 
 
 def _make_csv_logger(path: str):
@@ -50,11 +52,34 @@ def _make_csv_logger(path: str):
         return _Noop()
 
 
+def _make_wandb_logger(args):
+    if getattr(args, "disable_wandb", False):
+        return None
+    try:
+        from flower_research_extension.plugins.wandb_logger import WandBLogger
+
+        return WandBLogger(
+            exp_dir=args.wandb_dir,
+            project=args.wandb_project,
+            run_name=args.wandb_run_name,
+        )
+    except Exception:
+        logger.exception("Failed to initialize W&B logger; continuing without W&B")
+        return None
+
+
 def suppress_warnings():
     warnings.filterwarnings("ignore", category=UserWarning, module="datasets")
-    datasets.logging.set_verbosity_error()
-    hf_logging.set_verbosity_error()
     warnings.filterwarnings("ignore", category=DeprecationWarning)
+    # In monorepo layouts, "datasets" may resolve to a non-HuggingFace package.
+    # Keep this optional so startup never fails due to import path collisions.
+    try:
+        hf_datasets = importlib.import_module("datasets")
+        hf_logging = getattr(hf_datasets, "logging", None)
+        if hf_logging is not None and hasattr(hf_logging, "set_verbosity_error"):
+            hf_logging.set_verbosity_error()
+    except Exception as exc:
+        logger.debug("Skipping HuggingFace datasets logging suppression: %s", exc)
 
 
 def aggregate_fit_metrics(metrics: List[Tuple[int, Dict]]) -> Dict:
@@ -77,6 +102,18 @@ def aggregate_evaluate_metrics(metrics: List[Tuple[int, Dict]]) -> Dict:
 
 def _on_evaluate_config(server_round: int) -> Dict:
     return {"server_round": server_round}
+
+
+def _make_fit_config_fn(*, local_epochs: int, lr: float, momentum: float):
+    def _fit_config(server_round: int) -> Dict:
+        return {
+            "server_round": server_round,
+            "local_epochs": local_epochs,
+            "lr": lr,
+            "momentum": momentum,
+        }
+
+    return _fit_config
 
 
 def _evaluate_fn_factory(
@@ -114,6 +151,7 @@ def build_experiment(args):
     dataset_root = getattr(args, "dataset_root", "data")
     batch_size = getattr(args, "batch_size", 64)
     seed = getattr(args, "seed", 42)
+    seed_everything(seed)
 
     num_classes = int(getattr(provider, "num_classes", 10))
     model = args.model_builder(num_classes).to(device)
@@ -127,17 +165,23 @@ def build_experiment(args):
             device=device,
             batch_size=batch_size,
             seed=seed,
+            distribution=str(getattr(args, "distribution", "iid")),
+            dirichlet_alpha=float(getattr(args, "dirichlet_alpha", 0.5)),
+            label_skew_classes=int(getattr(args, "label_skew_classes", 2)),
+            shard_num_shards_per_partition=int(getattr(args, "shard_num_shards_per_partition", 2)),
+            inner_dirichlet_alpha=float(getattr(args, "inner_dirichlet_alpha", 0.5)),
+            size_partition_weights=getattr(args, "size_partition_weights", None),
+            distribution_matrix=getattr(args, "distribution_matrix", None),
             model_builder=args.model_builder
         )
     )
 
-    wandb_logger = WandBLogger(
-        exp_dir=args.wandb_dir,
-        project=args.wandb_project,
-        run_name=args.wandb_run_name,
-    )
     csv_logger = _make_csv_logger(getattr(args, "csv_log_dir", "results/logs"))
-    plugins: List[MetricsPlugin] = [wandb_logger, csv_logger]
+    plugins: List[MetricsPlugin] = []
+    wandb_logger = _make_wandb_logger(args)
+    if wandb_logger is not None:
+        plugins.append(wandb_logger)
+    plugins.append(csv_logger)
 
     min_avail = max(args.min_fit_clients, args.min_evaluate_clients)
 
@@ -147,7 +191,11 @@ def build_experiment(args):
         min_evaluate_clients=args.min_evaluate_clients,
         min_available_clients=min_avail,
         initial_parameters=init_params,
-        on_fit_config_fn=training_fit_config,  # your original hook
+        on_fit_config_fn=_make_fit_config_fn(
+            local_epochs=int(getattr(args, "local_epochs", 5)),
+            lr=float(getattr(args, "lr", 0.01)),
+            momentum=float(getattr(args, "momentum", 0.9)),
+        ),
         on_evaluate_config_fn=_on_evaluate_config,
         evaluate_fn=_evaluate_fn_factory(
             device=device,
@@ -160,8 +208,8 @@ def build_experiment(args):
         evaluate_metrics_aggregation_fn=aggregate_evaluate_metrics,
     )
 
-    hooked = HookedStrategy(base_strategy=base, plugins=plugins)
-    final_strat = RoundTimerStrategy(base_strategy=hooked, plugins=plugins)
+    timed = RoundTimerStrategy(base_strategy=base)
+    final_strat = HookedStrategy(base_strategy=timed, plugins=plugins)
 
     def server_fn(ctx: Context) -> ServerAppComponents:
         return ServerAppComponents(
@@ -183,7 +231,10 @@ def build_experiment(args):
         try:
             p.on_training_start({"dataset": provider.name, "num_partitions": args.num_partitions})
         except Exception:
-            pass
+            logger.exception(
+                "Plugin %s failed in on_training_start; continuing",
+                p.__class__.__name__,
+            )
 
     return client_app, server_app, plugins, backend
 
@@ -197,4 +248,10 @@ def run_experiment(args):
         backend_config=backend,
     )
     for plugin in plugins:
-        plugin.finalize()
+        try:
+            plugin.finalize()
+        except Exception:
+            logger.exception(
+                "Plugin %s failed in finalize; continuing",
+                plugin.__class__.__name__,
+            )

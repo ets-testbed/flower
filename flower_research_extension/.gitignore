@@ -1,0 +1,13 @@
+# Local virtual environments (including accidental name variants)
+.venv/
+venv/
+venv*/
+env/
+
+# Python cache/artifacts
+__pycache__/
+*.py[cod]
+
+# Local experiment outputs for this extension
+experiments/results/
+

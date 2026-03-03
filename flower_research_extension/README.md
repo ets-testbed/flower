@@ -1,120 +1,152 @@
-# 🌼 Flower Research Extension
+# Flower Research Extension
 
-This repository is a modular research-oriented extension for the [Flower Federated Learning Framework](https://flower.dev). It introduces a **plugin-based metrics logging system**, **custom strategy wrappers**, and a **flexible experiment runner** for benchmarking federated setups like CIFAR-10 with `FedAvg`.
+Research-oriented extension for [Flower](https://flower.dev) with:
+- plugin-based metrics logging,
+- strategy wrappers,
+- dataset-provider registry,
+- configurable experiment runner.
 
----
-
-## 📂 Project Structure
+## Project Layout
 
 ```
 flower_research_extension/
-│
-├── data/                        # Dataset loaders (e.g., CIFAR-10)
+├── client.py
+├── model.py
+├── training.py
+├── data_files/
+│   ├── base.py
+│   ├── registry.py
+│   ├── *_provider.py
 │   └── cifar10.py
-│
-├── models/                      # Neural network models
-│   └── model.py
-│
-├── plugins/                     # Hookable metrics plugins
-│   ├── base.py                  # Abstract plugin interface
-│   ├── csv_logger.py            # Logs round/client metrics to CSV
-│   └── wandb_logger.py          # Logs to Weights & Biases
-│
-├── strategies/                  # Custom strategy wrappers
-│   ├── custom_fedavg.py         # Customizable FedAvg variant
-│   ├── hooked_strategy.py       # Plugin-calling wrapper
-│   └── round_timer.py           # Adds timing hooks
-│
-├── experiments/                 # Entrypoint and utilities for experiments
-│   ├── run_experiment.py        # Entrypoint for simulation run
-│   ├── experiment_setup.py      # Common logic for modular setup
-│   ├── hyperparam_runs.sh       # Sample script for multiple runs
-│   └── setup.sh                 # All-in-one setup & install script
-│
-├── client.py                    # Client logic using Flower's ClientApp
-├── training.py                  # Fit and evaluate functions
-├── requirements.txt             # Pinned dependencies
-└── README.md
+├── strategies/
+├── plugins/
+├── experiments/
+│   ├── run_experiment.py        # minimal entrypoint
+│   ├── run_experiment_cli.py    # parser/validation/normalization
+│   ├── catalog.py               # model/dataset/distribution metadata
+│   ├── run_commands.py          # direct scenario runner
+│   └── RUN_COMMANDS.md          # scenario command guide
+├── tests/
+├── requirements.txt
+├── requirements-dev.txt
+├── setup.sh
+├── setup.ps1
+└── README_CHANGES.md
 ```
 
----
+## Setup
 
-## 🚀 Quickstart
+From `C:\pycharm\flower\flower_research_extension` (or equivalent path on Linux):
 
-These steps work on Linux with pip.
-
-1. **Clone the Flower framework**  
-   ```bash
-   git clone https://github.com/ets-testbed/flower.git
-   cd flower
-   ```
-
-2. **Run the all-in-one setup script**  
-   ```bash
-   bash flower_research_extension/setup.sh
-   ```
-   This will:
-   - Create and activate a Python 3 virtual environment (`venv`)
-   - Install core dependencies:
-     - `framework[simulation]`
-     - `./datasets`
-     - PyTorch + CUDA 12.1
-     - `wandb`, `scikit-learn`
-   - Print instructions to activate the env and run your experiment
-
-3. **Activate and launch**  
-   ```bash
-   source venv/bin/activate
-   python -m flower_research_extension.experiments.run_experiment
-   ```
-
-4. **Batch runs (optional)**  
-   ```bash
-   cd flower_research_extension/experiments
-   bash hyperparam_runs.sh
-   ```
-
----
-
-## 🛠️ Custom Setup
-
-- To use **conda** instead of `venv`, run:
-  ```bash
-  bash flower_research_extension/experiments/setup.sh --conda
-  ```
-- On **Windows**, replace activation with:
-  ```powershell
-  venv\Scripts\activate
-  ```
-
----
-
-## 🧩 Adding Your Own Plugin
-
-1. Subclass `MetricsPlugin` in `plugins/base.py`  
-2. Implement one or more hooks:  
-   - `on_round_end(...)`  
-   - `on_client_result(...)`  
-3. Add your plugin class to the `plugins` list in `run_experiment.py`
-
----
-
-## 📈 Example Output
-
-```
-results/
-├── logs/
-│   └── run_YYYYMMDD_HHMMSS/
-│       ├── global_metrics.csv
-│       └── client_metrics.csv
-└── wandb/
-    └── Weights & Biases online dashboard
+Linux/macOS:
+```bash
+bash setup.sh
+source .venv/bin/activate
 ```
 
-Each run folder contains round-by-round accuracy/loss logs.
+Windows (PowerShell):
+```powershell
+.\setup.ps1
+.\.venv\Scripts\Activate.ps1
+```
 
----
+Both setup scripts:
+- create `.venv`,
+- install local Flower framework in editable mode when `../framework` exists (otherwise install from PyPI),
+- install extension requirements,
+- install this package in editable mode.
 
-## 📬 Questions?
+## Run
 
-Open an issue or join us on [Flower Slack](https://friendly-flower.slack.com/join/shared_invite/zt-35epydsx3-_e~KjYPEcyevkJZ4Ja3XkA#/shared-invite/email).
+```bash
+python -m flower_research_extension.experiments.run_experiment
+```
+
+Copy-paste command catalog:
+- `experiments/RUN_COMMANDS.md`
+- Direct runner:
+  - `py -m flower_research_extension.experiments.run_commands --list`
+
+Hyperparameter sweep script (Linux/macOS bash):
+- `bash flower_research_extension/experiments/hyperparam_runs.sh --dry-run`
+- `bash flower_research_extension/experiments/hyperparam_runs.sh --only medium --dry-run -- --dataset cifar10 --model resnet18`
+
+Example:
+```bash
+python -m flower_research_extension.experiments.run_experiment --dataset mnist --model resnet18 --num_rounds 5
+```
+
+Print resolved config without running:
+```bash
+python -m flower_research_extension.experiments.run_experiment --dry_run
+```
+
+Disable W&B and tune local optimizer settings:
+```bash
+python -m flower_research_extension.experiments.run_experiment --disable_wandb --local_epochs 3 --lr 0.005 --momentum 0.8
+```
+
+Use dataset-specific automatic model selection:
+```bash
+python -m flower_research_extension.experiments.run_experiment --dataset cifar100 --model auto
+```
+
+Model resource profile metadata (informational):
+- `light`: `net`, `mobilenet_v2`, `shufflenet_v2_x1_0`, `squeezenet1_1`
+- `medium`: `resnet18`, `resnet34`, `densenet121`, `efficientnet_b0`
+- `heavy`: `resnet50`, `resnext50_32x4d`, `wide_resnet50_2`, `convnext_tiny`
+
+List all supported datasets, distributions, models, and dataset-model policies:
+```bash
+python -m flower_research_extension.experiments.run_experiment --list_capabilities
+```
+
+Dataset-model compatibility policy:
+- `mnist`: default `net`, allowed `net,resnet18,resnet34,mobilenet_v2,shufflenet_v2_x1_0,squeezenet1_1`
+- `fashionmnist`: default `net`, allowed `net,resnet18,resnet34,mobilenet_v2,shufflenet_v2_x1_0,squeezenet1_1`
+- `emnist_balanced`: default `resnet18`, allowed `net,resnet18,resnet34,mobilenet_v2,shufflenet_v2_x1_0,squeezenet1_1,densenet121,efficientnet_b0`
+- `cifar10`: default `resnet18`, allowed `net,resnet18,resnet34,mobilenet_v2,shufflenet_v2_x1_0,squeezenet1_1,densenet121,efficientnet_b0,resnet50,resnext50_32x4d,wide_resnet50_2,convnext_tiny`
+- `svhn`: default `resnet18`, allowed `net,resnet18,resnet34,mobilenet_v2,shufflenet_v2_x1_0,squeezenet1_1,densenet121,efficientnet_b0,resnet50,resnext50_32x4d,wide_resnet50_2,convnext_tiny`
+- `cifar100`: default `densenet121`, allowed `resnet18,resnet34,mobilenet_v2,shufflenet_v2_x1_0,squeezenet1_1,densenet121,efficientnet_b0,resnet50,resnext50_32x4d,wide_resnet50_2,convnext_tiny`
+
+Choose client data distribution:
+```bash
+python -m flower_research_extension.experiments.run_experiment --distribution dirichlet --dirichlet_alpha 0.3
+python -m flower_research_extension.experiments.run_experiment --distribution label_skew --label_skew_classes 2
+python -m flower_research_extension.experiments.run_experiment --distribution shard --shard_num_shards_per_partition 2
+python -m flower_research_extension.experiments.run_experiment --distribution size --size_partition_weights "1,2,3,4,5,6,7,8,9,10"
+python -m flower_research_extension.experiments.run_experiment --distribution inner_dirichlet --inner_dirichlet_alpha 0.5 --size_partition_weights "1,1,1,1,1,1,1,1,1,1"
+python -m flower_research_extension.experiments.run_experiment --distribution distribution --distribution_matrix_json partition_matrix.json
+```
+
+Distribution quick guide:
+- `iid`: uniform random split, closest to classical balanced FL.
+- `dirichlet`: random class proportions per client, controlled by `--dirichlet_alpha` (`smaller => more skew`).
+- `inner_dirichlet`: similar to Dirichlet but also biased by client size weights.
+- `distribution`: explicit class-probability matrix per client (most controlled/custom mode).
+- `label_skew`: each client only sees a small subset of classes.
+- `pathological`: alias of `label_skew` for standard pathological non-IID studies.
+- `shard`: label-sorted shards assigned to clients; creates sharp class concentration.
+- `linear`: client sizes grow linearly from client 0 to last client.
+- `square`: client sizes grow quadratically, stronger imbalance than linear.
+- `exponential`: client sizes grow exponentially, strongest built-in size imbalance.
+- `size`: manual client-size weights through `--size_partition_weights`.
+
+`distribution_matrix_json` notes:
+- matrix rows must equal `--num_partitions`
+- matrix columns must be at least the dataset class count (for example, at least 10 columns for `cifar10`)
+
+## Reproducibility
+
+The extension now applies deterministic seeding at:
+- experiment startup,
+- per-client startup,
+- data partition split and data-loader workers.
+
+Use `--seed` in `run_experiment.py` to control run-to-run determinism.
+
+## Plugin Extension
+
+1. Subclass `MetricsPlugin` in `plugins/base.py`.
+2. Implement needed hooks (`on_client_result`, `on_round_end`, `on_server_evaluate`, etc.).
+3. Register plugin creation in `experiments/experiment_setup.py`.

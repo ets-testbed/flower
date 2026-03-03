@@ -1,9 +1,13 @@
 from typing import List, Tuple, Optional, Dict
+import logging
+
 from flwr.server.strategy import Strategy
 from flwr.server.client_proxy import ClientProxy
 from flwr.common import Parameters, FitRes
 
 from flower_research_extension.plugins.base import MetricsPlugin
+
+logger = logging.getLogger(__name__)
 
 
 class HookedStrategy(Strategy):
@@ -11,6 +15,16 @@ class HookedStrategy(Strategy):
         self.base_strategy = base_strategy
         self.plugins = plugins or []
         self.client_metrics_history = []
+
+    def _safe_plugin_call(self, plugin: MetricsPlugin, hook_name: str, *args) -> None:
+        try:
+            getattr(plugin, hook_name)(*args)
+        except Exception:
+            logger.exception(
+                "Plugin %s failed in %s; continuing training",
+                plugin.__class__.__name__,
+                hook_name,
+            )
 
     # Mandatory: delegate abstract methods
     def initialize_parameters(self, client_manager):
@@ -32,22 +46,23 @@ class HookedStrategy(Strategy):
         failures: List[Tuple[ClientProxy, BaseException]],
     ) -> Tuple[Optional[Parameters], Dict]:
         aggregated_params, aggregated_metrics = self.base_strategy.aggregate_fit(server_round, results, failures)
+        aggregated_metrics = aggregated_metrics or {}
 
         for proxy, fit_res in results:
             client_id = proxy.cid
             for plugin in self.plugins:
-                plugin.on_client_result(server_round, client_id, fit_res.metrics)
+                self._safe_plugin_call(plugin, "on_client_result", server_round, client_id, fit_res.metrics)
 
         for item in failures:
             if isinstance(item, tuple) and len(item) == 2:
                 proxy, exc = item
                 for plugin in self.plugins:
-                    plugin.on_client_failure(server_round, proxy.cid, exc)
+                    self._safe_plugin_call(plugin, "on_client_failure", server_round, proxy.cid, exc)
             else:
-                print(f"[WARN] Unexpected failure format in `failures`: {item}")
+                logger.warning("Unexpected failure format in `failures`: %s", item)
 
         for plugin in self.plugins:
-            plugin.on_round_end(server_round, aggregated_metrics)
+            self._safe_plugin_call(plugin, "on_round_end", server_round, aggregated_metrics)
 
         return aggregated_params, aggregated_metrics
 
@@ -58,6 +73,6 @@ class HookedStrategy(Strategy):
 
         _, metrics = result
         for plugin in self.plugins:
-            plugin.on_server_evaluate(server_round, metrics)
+            self._safe_plugin_call(plugin, "on_server_evaluate", server_round, metrics)
 
         return result

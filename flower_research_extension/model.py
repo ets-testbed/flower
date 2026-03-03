@@ -3,14 +3,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from collections import OrderedDict
-from typing import Dict, List, Optional, Tuple
+from typing import List
 
 import numpy as np
 
-
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
 
 class Net(nn.Module):
     def __init__(self, num_classes: int, in_channels: int = 3) -> None:
@@ -38,6 +34,12 @@ def get_parameters(net) -> List[np.ndarray]:
 
 
 def set_parameters(net, parameters: List[np.ndarray]):
-    params_dict = zip(net.state_dict().keys(), parameters)
-    state_dict = OrderedDict({k: torch.Tensor(v) for k, v in params_dict})
+    current_state = net.state_dict()
+    state_dict = OrderedDict()
+    for key, value in zip(current_state.keys(), parameters):
+        tensor = torch.as_tensor(value)
+        ref_tensor = current_state[key]
+        if tensor.dtype != ref_tensor.dtype:
+            tensor = tensor.to(dtype=ref_tensor.dtype)
+        state_dict[key] = tensor
     net.load_state_dict(state_dict, strict=True)

@@ -2,13 +2,18 @@ from setuptools import setup, find_packages
 
 setup(
     name="flower_research_extension",
-    version="0.1",
+    version="0.2.0",
     packages=find_packages(),
+    python_requires=">=3.10",
     install_requires=[
-        "flwr[simulation]>=1.5.0",  # includes simulation dependencies
-        "wandb",
-        "scikit-learn",
+        "flwr[simulation]>=1.5.0",
+        "numpy>=1.24",
+        "torch>=2.2",
+        "torchvision>=0.17",
+        "wandb>=0.16",
+        "scikit-learn>=1.3",
     ],
+    extras_require={
+        "dev": ["pytest>=8.0"],
+    },
 )
-
-# torch linux: pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128

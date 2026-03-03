@@ -40,6 +40,7 @@ class RoundTimerStrategy(Strategy):
         aggregated_params, aggregated_metrics = self.base_strategy.aggregate_fit(server_round, results, failures)
         duration = time.time() - start_time
 
+        aggregated_metrics = aggregated_metrics or {}
         aggregated_metrics["round_time"] = duration
 
         return aggregated_params, aggregated_metrics
