@@ -17,10 +17,12 @@
 
 import abc
 from collections.abc import Sequence
+from typing import Literal
 
+from flwr.app.user_config import UserConfig
 from flwr.common import Context, Message
 from flwr.common.record import ConfigRecord
-from flwr.common.typing import Run, RunStatus, UserConfig
+from flwr.common.typing import Run, RunStatus
 from flwr.proto.node_pb2 import NodeInfo  # pylint: disable=E0611
 from flwr.supercore.corestate import CoreState
 from flwr.superlink.federation import FederationManager
@@ -246,26 +248,6 @@ class LinkState(CoreState):  # pylint: disable=R0904
         """
 
     @abc.abstractmethod
-    def get_node_public_key(self, node_id: int) -> bytes:
-        """Get `public_key` for the specified `node_id`.
-
-        Parameters
-        ----------
-        node_id : int
-            The identifier of the node whose public key is to be retrieved.
-
-        Returns
-        -------
-        bytes
-            The public key associated with the specified `node_id`.
-
-        Raises
-        ------
-        ValueError
-            If the specified `node_id` does not exist in the link state.
-        """
-
-    @abc.abstractmethod
     def create_run(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
         fab_id: str | None,
@@ -327,6 +309,47 @@ class LinkState(CoreState):  # pylint: disable=R0904
         -------
         Optional[Run]
             The `Run` instance if found; otherwise, `None`.
+        """
+
+    @abc.abstractmethod
+    def get_run_info(  # pylint: disable=too-many-arguments
+        self,
+        *,
+        run_ids: Sequence[int] | None = None,
+        statuses: Sequence[str] | None = None,
+        flwr_aids: Sequence[str] | None = None,
+        federations: Sequence[str] | None = None,
+        order_by: Literal["pending_at"] | None = None,
+        ascending: bool = True,
+        limit: int | None = None,
+    ) -> Sequence[Run]:
+        """Retrieve information about runs based on the specified filters.
+
+        - If a filter is set to None, it is ignored.
+        - If multiple filters are provided, they are combined using AND logic.
+        - Within each filter, provided values are combined using OR logic.
+
+        Parameters
+        ----------
+        run_ids : Optional[Sequence[int]] (default: None)
+            Sequence of run IDs to filter by.
+        statuses : Optional[Sequence[str]] (default: None)
+            Sequence of run status values to filter by.
+        flwr_aids : Optional[Sequence[str]] (default: None)
+            Sequence of Flower Account IDs to filter by.
+        federations : Optional[Sequence[str]] (default: None)
+            Sequence of federation names to filter by.
+        order_by : Optional[Literal["pending_at"]] (default: None)
+            Field used to order the result.
+        ascending : bool (default: True)
+            Whether sorting should be in ascending order.
+        limit : Optional[int] (default: None)
+            Maximum number of runs to return. If `None`, no limit is applied.
+
+        Returns
+        -------
+        Sequence[Run]
+            A sequence of Run objects representing runs matching the specified filters.
         """
 
     @abc.abstractmethod

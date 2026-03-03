@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from flwr.common.constant import FLWR_DIR
-from flwr.common.version import package_name, package_version
+from flwr.supercore.version import package_name, package_version
 
 FLWR_TELEMETRY_ENABLED = os.getenv("FLWR_TELEMETRY_ENABLED", "1")
 FLWR_TELEMETRY_LOGGING = os.getenv("FLWR_TELEMETRY_LOGGING", "0")
@@ -166,10 +166,6 @@ class EventType(str, Enum):
     FLWR_CLIENTAPP_RUN_LEAVE = auto()
 
     # --- Simulation Engine ------------------------------------------------------------
-
-    # CLI: flower-simulation
-    CLI_FLOWER_SIMULATION_ENTER = auto()
-    CLI_FLOWER_SIMULATION_LEAVE = auto()
 
     # Python API: `run_simulation`
     PYTHON_API_RUN_SIMULATION_ENTER = auto()

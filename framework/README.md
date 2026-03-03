@@ -9,7 +9,7 @@
     <a href="https://flower.ai/">Website</a> |
     <a href="https://flower.ai/blog">Blog</a> |
     <a href="https://flower.ai/docs/">Docs</a> |
-    <a href="https://flower.ai/events/flower-ai-summit-2025">Summit</a> |
+    <a href="https://flower.ai/events/flower-ai-summit-2026/?utm_source=docs">Summit</a> |
     <a href="https://flower.ai/join-slack">Slack</a>
     <br /><br />
 </p>
@@ -143,7 +143,6 @@ Other [examples](https://github.com/adap/flower/tree/main/examples):
 - [Comprehensive Flower+XGBoost](https://github.com/adap/flower/tree/main/examples/xgboost-comprehensive)
 - [Flower with KaplanMeierFitter from the lifelines library](https://github.com/adap/flower/tree/main/examples/federated-kaplan-meier-fitter)
 - [Sample Level Privacy with Opacus](https://github.com/adap/flower/tree/main/examples/opacus)
-- [Sample Level Privacy with TensorFlow-Privacy](https://github.com/adap/flower/tree/main/examples/tensorflow-privacy)
 - [Flower with a Tabular Dataset](https://github.com/adap/flower/tree/main/examples/fl-tabular)
 
 ## Community
@@ -171,4 +170,4 @@ Please also consider adding your publication to the list of Flower-based publica
 
 ## Contributing to Flower
 
-We welcome contributions. Please see [CONTRIBUTING.md](CONTRIBUTING.md) to get started!
+We welcome contributions. Please see [CONTRIBUTING.md](../CONTRIBUTING.md) to get started!
