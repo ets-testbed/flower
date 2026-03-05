@@ -44,6 +44,37 @@ class WandBLogger(MetricsPlugin):
         wandb.define_metric("round")
         wandb.define_metric("*", step_metric="round")
 
+    def _to_wandb_value(self, value):
+        if value is None or isinstance(value, (bool, int, float, str)):
+            return value
+        if isinstance(value, dict):
+            return {str(k): self._to_wandb_value(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple, set)):
+            return [self._to_wandb_value(v) for v in value]
+        if callable(value):
+            return getattr(value, "__name__", str(value))
+        return str(value)
+
+    def _flatten_dict(self, payload: Dict, *, prefix: str = "") -> Dict[str, object]:
+        out: Dict[str, object] = {}
+        for key, value in payload.items():
+            full_key = f"{prefix}.{key}" if prefix else str(key)
+            if isinstance(value, dict):
+                out.update(self._flatten_dict(value, prefix=full_key))
+            else:
+                out[full_key] = value
+        return out
+
+    def on_training_start(self, config: Dict = None):
+        if not config:
+            return
+        safe = self._to_wandb_value(config)
+        if not isinstance(safe, dict):
+            safe = {"run_config": safe}
+        flat = self._flatten_dict(safe)
+        if flat:
+            wandb.config.update(flat, allow_val_change=True)
+
     # def on_client_result(self, round_num: int, client_id: str, metrics: Dict):
     #     if metrics:
     #         metrics = {f"round/{round_num}/{k}": v for k, v in metrics.items()}

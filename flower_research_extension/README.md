@@ -58,14 +58,29 @@ Both setup scripts:
 
 ## Run
 
+`run_experiment` supports two invocation modes:
+- From `flower_research_extension/`: `py -m experiments.run_experiment ...`
+- From repo root (`C:\pycharm\flower`): `py -m flower_research_extension.experiments.run_experiment ...`
+
+Note: use `py` on Windows PowerShell and `python` on Linux/macOS shells.
+
+Quick smoke check (from `flower_research_extension/`):
+
+```powershell
+py -m experiments.run_experiment --dry_run --disable_wandb
+```
+
+Equivalent smoke check (from repo root):
+
 ```bash
-python -m flower_research_extension.experiments.run_experiment
+py -m flower_research_extension.experiments.run_experiment --dry_run --disable_wandb
 ```
 
 Copy-paste command catalog:
 - `experiments/RUN_COMMANDS.md`
 - Direct runner:
-  - `py -m flower_research_extension.experiments.run_commands --list`
+  - from `flower_research_extension/`: `py -m experiments.run_commands --list`
+  - from repo root: `py -m flower_research_extension.experiments.run_commands --list`
 
 Hyperparameter sweep script (Linux/macOS bash):
 - `bash flower_research_extension/experiments/hyperparam_runs.sh --dry-run`
@@ -73,22 +88,34 @@ Hyperparameter sweep script (Linux/macOS bash):
 
 Example:
 ```bash
-python -m flower_research_extension.experiments.run_experiment --dataset mnist --model resnet18 --num_rounds 5
+py -m experiments.run_experiment --dataset mnist --model resnet18 --num_rounds 5
 ```
 
 Print resolved config without running:
 ```bash
-python -m flower_research_extension.experiments.run_experiment --dry_run
+py -m experiments.run_experiment --dry_run
 ```
 
 Disable W&B and tune local optimizer settings:
 ```bash
-python -m flower_research_extension.experiments.run_experiment --disable_wandb --local_epochs 3 --lr 0.005 --momentum 0.8
+py -m experiments.run_experiment --disable_wandb --local_epochs 3 --lr 0.005 --momentum 0.8
 ```
+
+With W&B enabled, the run now captures an expanded start-of-run configuration payload, including:
+- resolved CLI args
+- dataset/model/distribution setup
+- optimizer and federated settings
+- client resource settings and runtime environment metadata.
+
+Without W&B, the CSV logger now stores the same experiment context and round-level results under each run folder:
+- `run_config.json`: full resolved run configuration snapshot
+- `round_metrics.jsonl`: chronological fit/eval/failure events per round
+- `run_summary.json`: final summary with key counters, last metrics, and artifact paths
+- `global_metrics_*.csv` and `client_metrics_*.csv`: compact tabular metrics.
 
 Use dataset-specific automatic model selection:
 ```bash
-python -m flower_research_extension.experiments.run_experiment --dataset cifar100 --model auto
+py -m experiments.run_experiment --dataset cifar100 --model auto
 ```
 
 Model resource profile metadata (informational):
@@ -98,7 +125,7 @@ Model resource profile metadata (informational):
 
 List all supported datasets, distributions, models, and dataset-model policies:
 ```bash
-python -m flower_research_extension.experiments.run_experiment --list_capabilities
+py -m experiments.run_experiment --list_capabilities
 ```
 
 Dataset-model compatibility policy:
@@ -111,12 +138,12 @@ Dataset-model compatibility policy:
 
 Choose client data distribution:
 ```bash
-python -m flower_research_extension.experiments.run_experiment --distribution dirichlet --dirichlet_alpha 0.3
-python -m flower_research_extension.experiments.run_experiment --distribution label_skew --label_skew_classes 2
-python -m flower_research_extension.experiments.run_experiment --distribution shard --shard_num_shards_per_partition 2
-python -m flower_research_extension.experiments.run_experiment --distribution size --size_partition_weights "1,2,3,4,5,6,7,8,9,10"
-python -m flower_research_extension.experiments.run_experiment --distribution inner_dirichlet --inner_dirichlet_alpha 0.5 --size_partition_weights "1,1,1,1,1,1,1,1,1,1"
-python -m flower_research_extension.experiments.run_experiment --distribution distribution --distribution_matrix_json partition_matrix.json
+py -m experiments.run_experiment --distribution dirichlet --dirichlet_alpha 0.3
+py -m experiments.run_experiment --distribution label_skew --label_skew_classes 2
+py -m experiments.run_experiment --distribution shard --shard_num_shards_per_partition 2
+py -m experiments.run_experiment --distribution size --size_partition_weights "1,2,3,4,5,6,7,8,9,10"
+py -m experiments.run_experiment --distribution inner_dirichlet --inner_dirichlet_alpha 0.5 --size_partition_weights "1,1,1,1,1,1,1,1,1,1"
+py -m experiments.run_experiment --distribution distribution --distribution_matrix_json partition_matrix.json
 ```
 
 Distribution quick guide:
@@ -131,6 +158,11 @@ Distribution quick guide:
 - `square`: client sizes grow quadratically, stronger imbalance than linear.
 - `exponential`: client sizes grow exponentially, strongest built-in size imbalance.
 - `size`: manual client-size weights through `--size_partition_weights`.
+
+Windows simulation notes:
+- Flower currently prints a Ray experimental-support warning on Windows; this is expected.
+- You might also see Ray/PyTorch deprecation warnings in client logs; these do not stop training.
+- A real failure will end with a Python traceback and non-zero exit status.
 
 `distribution_matrix_json` notes:
 - matrix rows must equal `--num_partitions`

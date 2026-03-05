@@ -4,6 +4,8 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from functools import partial
+import os
 from pathlib import Path
 import math
 import random
@@ -14,6 +16,14 @@ import torch
 from torch.utils.data import ConcatDataset, DataLoader, Dataset, Subset
 
 from flower_research_extension.utils.reproducibility import make_torch_generator
+
+
+def _seed_worker_with_base(worker_id: int, *, base_seed: int) -> None:
+    """Top-level worker init function so multiprocessing can pickle it."""
+    worker_seed = int(base_seed) + int(worker_id)
+    random.seed(worker_seed)
+    np.random.seed(worker_seed % (2**32))
+    torch.manual_seed(worker_seed)
 
 
 @dataclass(frozen=True)
@@ -80,13 +90,9 @@ class DatasetProvider(ABC):
         return Subset(train_ds, train_idxs), Subset(train_ds, val_idxs)
 
     def _make_worker_init_fn(self, base_seed: int) -> Callable[[int], None]:
-        def _seed_worker(worker_id: int) -> None:
-            worker_seed = int(base_seed) + int(worker_id)
-            random.seed(worker_seed)
-            np.random.seed(worker_seed % (2**32))
-            torch.manual_seed(worker_seed)
-
-        return _seed_worker
+        # Use a top-level function + partial so DataLoader workers are pickle-safe
+        # on Windows (spawn) and newer Python multiprocessing defaults.
+        return partial(_seed_worker_with_base, base_seed=int(base_seed))
 
     def _dataset_labels(self, dataset: Dataset) -> list[int]:
         """Extract integer class labels from common torchvision-style datasets."""
@@ -452,8 +458,14 @@ class DatasetProvider(ABC):
             train_part = Subset(train_ds, part_rel)
 
         base_seed = self._partition_seed(spec, offset=101)
+        # Flower+Ray on Windows can fail when DataLoader uses multiprocessing
+        # workers (spawn/Pipe handle errors). Force single-process loading there.
+        effective_num_workers = int(spec.num_workers)
+        if os.name == "nt":
+            effective_num_workers = 0
+
         loader_common_kwargs = {
-            "num_workers": spec.num_workers,
+            "num_workers": effective_num_workers,
             "pin_memory": torch.cuda.is_available(),
             "worker_init_fn": self._make_worker_init_fn(base_seed),
             "generator": make_torch_generator(base_seed),

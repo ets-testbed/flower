@@ -8,40 +8,50 @@ From:
 cd C:\pycharm\flower\flower_research_extension
 ```
 
+From this directory, use `experiments.run_commands` module path.
+If you are at repo root (`C:\pycharm\flower`), use `flower_research_extension.experiments.run_commands`.
+
 List available scenarios:
 
 ```powershell
-py -m flower_research_extension.experiments.run_commands --list
+py -m experiments.run_commands --list
 ```
 
 Run one scenario directly:
 
 ```powershell
-py -m flower_research_extension.experiments.run_commands --scenario mnist_iid
+py -m experiments.run_commands --scenario mnist_iid
+```
+
+Note: full simulation runs require simulation deps (Ray via `flwr[simulation]`).
+If missing, install:
+
+```powershell
+py -m pip install -U "flwr[simulation]"
 ```
 
 Run one scenario as config-check only:
 
 ```powershell
-py -m flower_research_extension.experiments.run_commands --scenario mnist_iid --dry_run
+py -m experiments.run_commands --scenario mnist_iid --dry_run
 ```
 
 Run all important scenarios:
 
 ```powershell
-py -m flower_research_extension.experiments.run_commands --all
+py -m experiments.run_commands --all
 ```
 
 Run all as dry-run only:
 
 ```powershell
-py -m flower_research_extension.experiments.run_commands --all --dry_run
+py -m experiments.run_commands --all --dry_run
 ```
 
 Print commands without executing:
 
 ```powershell
-py -m flower_research_extension.experiments.run_commands --all --print_only
+py -m experiments.run_commands --all --print_only
 ```
 
 ## Scenario Names

@@ -3,6 +3,9 @@ from typing import List, Tuple, Dict, Any
 import inspect
 import importlib
 import logging
+from datetime import datetime, timezone
+import platform
+import sys
 
 import torch
 
@@ -123,6 +126,7 @@ def _evaluate_fn_factory(
     dataset_root: str,
     batch_size: int,
     seed: int,
+    model_builder,
 ):
     # Accept either a Parameters proto or already-converted ndarrays.
     def evaluate_fn(server_round: int, parameters: Any, config: Dict) -> Tuple[float, Dict]:
@@ -137,8 +141,83 @@ def _evaluate_fn_factory(
             device=device,
             batch_size=batch_size,
             seed=seed,
+            model_builder=model_builder,
         )
     return evaluate_fn
+
+
+def _serialize_config_value(value: Any) -> Any:
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, dict):
+        return {str(k): _serialize_config_value(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_serialize_config_value(v) for v in value]
+    if callable(value):
+        return getattr(value, "__name__", str(value))
+    return str(value)
+
+
+def _build_training_start_config(
+    *,
+    args,
+    provider,
+    dataset_root: str,
+    device: torch.device,
+    backend: Dict[str, Any],
+    model: torch.nn.Module,
+) -> Dict[str, Any]:
+    args_cfg = {k: _serialize_config_value(v) for k, v in vars(args).items()}
+    model_total_params = int(sum(p.numel() for p in model.parameters()))
+    model_trainable_params = int(sum(p.numel() for p in model.parameters() if p.requires_grad))
+
+    return {
+        "run": {
+            "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+            "entrypoint": "flower_research_extension.experiments.run_experiment",
+            "wandb_run_name": getattr(args, "wandb_run_name", ""),
+            "wandb_project": getattr(args, "wandb_project", ""),
+            "disable_wandb": bool(getattr(args, "disable_wandb", False)),
+        },
+        "dataset": {
+            "name": str(getattr(provider, "name", "")),
+            "num_classes": int(getattr(provider, "num_classes", 0)),
+            "root": str(dataset_root),
+        },
+        "model": {
+            "requested": str(getattr(args, "requested_model", "")),
+            "resolved": str(getattr(args, "model", "")),
+            "fit_profile": str(getattr(args, "model_fit_profile", "")),
+            "builder": str(args_cfg.get("model_builder", "")),
+            "total_parameters": model_total_params,
+            "trainable_parameters": model_trainable_params,
+        },
+        "federated": {
+            "num_rounds": int(getattr(args, "num_rounds", 0)),
+            "num_partitions": int(getattr(args, "num_partitions", 0)),
+            "fraction_fit": float(getattr(args, "fraction_fit", 0.0)),
+            "min_fit_clients": int(getattr(args, "min_fit_clients", 0)),
+            "min_evaluate_clients": int(getattr(args, "min_evaluate_clients", 0)),
+            "distribution": str(getattr(args, "distribution", "")),
+            "seed": int(getattr(args, "seed", 0)),
+        },
+        "optimizer": {
+            "local_epochs": int(getattr(args, "local_epochs", 0)),
+            "lr": float(getattr(args, "lr", 0.0)),
+            "momentum": float(getattr(args, "momentum", 0.0)),
+            "batch_size": int(getattr(args, "batch_size", 0)),
+        },
+        "resources": {
+            "device": str(device),
+            "client_resources": _serialize_config_value(backend.get("client_resources", {})),
+        },
+        "runtime": {
+            "python_version": sys.version.split()[0],
+            "platform": platform.platform(),
+            "torch_version": torch.__version__,
+        },
+        "resolved_args": args_cfg,
+    }
 
 
 
@@ -203,6 +282,7 @@ def build_experiment(args):
             dataset_root=dataset_root,
             batch_size=batch_size,
             seed=seed,
+            model_builder=args.model_builder,
         ),
         fit_metrics_aggregation_fn=aggregate_fit_metrics,
         evaluate_metrics_aggregation_fn=aggregate_evaluate_metrics,
@@ -226,10 +306,19 @@ def build_experiment(args):
         }
     }
 
+    training_start_cfg = _build_training_start_config(
+        args=args,
+        provider=provider,
+        dataset_root=dataset_root,
+        device=device,
+        backend=backend,
+        model=model,
+    )
+
     # Make runs visible immediately
     for p in plugins:
         try:
-            p.on_training_start({"dataset": provider.name, "num_partitions": args.num_partitions})
+            p.on_training_start(training_start_cfg)
         except Exception:
             logger.exception(
                 "Plugin %s failed in on_training_start; continuing",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import subprocess
 import sys
@@ -186,6 +187,16 @@ def _list_scenarios() -> None:
         print(f"- {name}")
 
 
+def _ensure_simulation_deps() -> None:
+    # Flower simulation backend currently relies on Ray.
+    if importlib.util.find_spec("ray") is None:
+        raise SystemExit(
+            "Simulation dependency missing: 'ray'.\n"
+            "Install with: py -m pip install -U \"flwr[simulation]\"\n"
+            "Or run this command with --dry_run."
+        )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run predefined important experiment commands.")
     parser.add_argument("--list", action="store_true", help="List available scenarios and exit.")
@@ -201,6 +212,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.all:
+        if not args.dry_run and not args.print_only:
+            _ensure_simulation_deps()
         for scenario in SCENARIOS:
             cmd = _build_command(scenario, dry_run=args.dry_run)
             _run_command(cmd, print_only=args.print_only)
@@ -210,6 +223,9 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("Provide --scenario <name>, or use --all, or --list")
     if args.scenario not in SCENARIOS:
         parser.error(f"Unknown scenario '{args.scenario}'. Use --list to see options.")
+
+    if not args.dry_run and not args.print_only:
+        _ensure_simulation_deps()
 
     cmd = _build_command(args.scenario, dry_run=args.dry_run)
     _run_command(cmd, print_only=args.print_only)
