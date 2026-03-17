@@ -13,6 +13,4 @@ experiments/results/
 
 *.csv
 *.jsonl
-test_*
 results/
-

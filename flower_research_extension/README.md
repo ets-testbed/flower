@@ -14,10 +14,11 @@ flower_research_extension/
 ├── model.py
 ├── training.py
 ├── data_files/
+│   ├── __init__.py              # registers built-in dataset providers
 │   ├── base.py
 │   ├── registry.py
-│   ├── *_provider.py
-│   └── cifar10.py
+│   ├── *_provider.py            # cifar10/cifar100/mnist/fashionmnist/svhn/emnist providers
+│   └── cifar10.py               # legacy CIFAR-10 compatibility helper
 ├── strategies/
 ├── plugins/
 ├── experiments/
@@ -25,6 +26,7 @@ flower_research_extension/
 │   ├── run_experiment_cli.py    # parser/validation/normalization
 │   ├── catalog.py               # model/dataset/distribution metadata
 │   ├── run_commands.py          # direct scenario runner
+│   ├── validation_suite.py      # pass/fail smoke suite for recent updates
 │   └── RUN_COMMANDS.md          # scenario command guide
 ├── tests/
 ├── requirements.txt
@@ -33,6 +35,8 @@ flower_research_extension/
 ├── setup.ps1
 └── README_CHANGES.md
 ```
+
+The project layout above is representative, not a byte-for-byte directory dump. Dataset loading is provider-based: the active dataset implementations are the `*_provider.py` files registered through `data_files/__init__.py`. `data_files/cifar10.py` is retained only as a backward-compatible helper exposing `load_cifar10_partition(...)` for older imports.
 
 ## Setup
 
@@ -82,6 +86,16 @@ Copy-paste command catalog:
   - from `flower_research_extension/`: `py -m experiments.run_commands --list`
   - from repo root: `py -m flower_research_extension.experiments.run_commands --list`
 
+Validation suite:
+- from `flower_research_extension/`: `py -m experiments.validation_suite --mode smoke --num_rounds 1`
+- from repo root: `py -m flower_research_extension.experiments.validation_suite --mode smoke --num_rounds 1`
+- writes plain summaries and per-case logs under `results/validation/validation_<timestamp>/`
+- validation-suite runs are CPU-only by default (`--client_gpu 0`)
+- real runtime cases are skipped automatically when `ray` is not installed in the active interpreter
+- `--mode smoke`: exhaustive dry-run coverage plus representative real runtime checks
+- `--mode dry-only`: skip real training runs entirely
+- `--mode full`: add all dataset/model dry-run combinations and full real-dataset runtime coverage
+
 Hyperparameter sweep script (Linux/macOS bash):
 - `bash flower_research_extension/experiments/hyperparam_runs.sh --dry-run`
 - `bash flower_research_extension/experiments/hyperparam_runs.sh --only medium --dry-run -- --dataset cifar10 --model resnet18`
@@ -99,6 +113,11 @@ py -m experiments.run_experiment --dry_run
 Disable W&B and tune local optimizer settings:
 ```bash
 py -m experiments.run_experiment --disable_wandb --local_epochs 3 --lr 0.005 --momentum 0.8
+```
+
+Manual GPU smoke example:
+```bash
+py -m experiments.run_experiment --dataset mnist --model net --distribution iid --num_rounds 1 --num_partitions 1 --fraction_fit 1 --min_fit_clients 1 --min_evaluate_clients 1 --batch_size 16 --local_epochs 1 --client_cpu 1 --client_gpu 0.25
 ```
 
 With W&B enabled, the run now captures an expanded start-of-run configuration payload, including:
@@ -182,3 +201,4 @@ Use `--seed` in `run_experiment.py` to control run-to-run determinism.
 1. Subclass `MetricsPlugin` in `plugins/base.py`.
 2. Implement needed hooks (`on_client_result`, `on_round_end`, `on_server_evaluate`, etc.).
 3. Register plugin creation in `experiments/experiment_setup.py`.
+
