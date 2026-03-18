@@ -202,3 +202,7 @@ Use `--seed` in `run_experiment.py` to control run-to-run determinism.
 2. Implement needed hooks (`on_client_result`, `on_round_end`, `on_server_evaluate`, etc.).
 3. Register plugin creation in `experiments/experiment_setup.py`.
 
+## Acknowledgment
+
+This work was supported by the [LASI Lab](https://www.etsmtl.ca/en/labs/lasi) and the [Imagin Lab](https://www.etsmtl.ca/en/labs/imagin-lab) at École de technologie supérieure (ÉTS).
+
