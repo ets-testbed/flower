@@ -8,6 +8,7 @@ setup(
     install_requires=[
         "flwr[simulation]>=1.5.0",
         "numpy>=1.24",
+        "PyYAML>=6.0",
         "torch>=2.2",
         "torchvision>=0.17",
         "wandb>=0.16",

@@ -25,7 +25,6 @@ def _seed_worker_with_base(worker_id: int, *, base_seed: int) -> None:
     np.random.seed(worker_seed % (2**32))
     torch.manual_seed(worker_seed)
 
-
 @dataclass(frozen=True)
 class PartitionSpec:
     partition_id: int
@@ -42,7 +41,6 @@ class PartitionSpec:
     inner_dirichlet_alpha: float = 0.5
     size_partition_weights: Optional[Tuple[float, ...]] = None
     distribution_matrix: Optional[Tuple[Tuple[float, ...], ...]] = None
-
 
 class DatasetProvider(ABC):
     """Uniform dataset interface so strategies/clients stay dataset-agnostic."""

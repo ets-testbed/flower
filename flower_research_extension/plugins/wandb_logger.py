@@ -81,9 +81,8 @@ class WandBLogger(MetricsPlugin):
     #         wandb.log(metrics, step=round_num, commit=False)
 
     def on_round_end(self, round_num: int, aggregated_metrics: Dict):
-        fit_metrics = {k: v for k, v in aggregated_metrics.items() if k.startswith("fit/")}
-        if not fit_metrics and aggregated_metrics:
-            fit_metrics = aggregated_metrics
+        aggregated_metrics = aggregated_metrics or {}
+        fit_metrics = {f"fit/{k}": v for k, v in aggregated_metrics.items()}
         if fit_metrics:
             # Do not commit yet; eval will commit to produce 1 commit/round
             wandb.log({"round": round_num, **fit_metrics}, step=round_num, commit=False)
@@ -91,7 +90,7 @@ class WandBLogger(MetricsPlugin):
     def on_server_evaluate(self, round_num: int, metrics: Dict):
         if metrics:
             # Commit at eval so each round ends with a single commit
-            wandb.log({"round": round_num, **metrics}, step=round_num, commit=True)
+            wandb.log({"round": round_num, **{f"eval/{k}": v for k, v in metrics.items()}}, step=round_num, commit=True)
 
     def on_client_failure(self, round_num: int, client_id: str, error: Exception):
         wandb.log({"round": round_num, f"{client_id}/failure": str(error)}, step=round_num, commit=False)

@@ -53,22 +53,24 @@ def _capabilities() -> dict:
     return build_capabilities(datasets=_REGISTRY.available())
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser(defaults: dict | None = None) -> argparse.ArgumentParser:
+    defaults = defaults or {}
     parser = argparse.ArgumentParser(
         description="Run a Flower federated learning experiment with configurable parameters."
     )
+    parser.add_argument("--config", type=str, default=defaults.get("config"), help="Optional YAML config file")
     parser.add_argument(
         "--dataset",
         type=str,
-        default="mnist",
+        default=defaults.get("dataset", "mnist"),
         choices=_REGISTRY.available(),
         help="Dataset to use",
     )
-    parser.add_argument("--dataset_root", type=str, default="data", help="Dataset root directory")
+    parser.add_argument("--dataset_root", type=str, default=defaults.get("dataset_root", "data"), help="Dataset root directory")
     parser.add_argument(
         "--model",
         type=str,
-        default="auto",
+        default=defaults.get("model", "auto"),
         choices=sorted(["auto", *MODEL_BUILDERS.keys()]),
         help="Model architecture or 'auto' to use dataset-specific default",
     )
@@ -77,87 +79,87 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print datasets/distributions/models, descriptions, and dataset-model policies as JSON, then exit.",
     )
-    parser.add_argument("--batch_size", type=int, default=64, help="Batch size per client")
-    parser.add_argument("--seed", type=int, default=42, help="Random seed for partitioning")
+    parser.add_argument("--batch_size", type=int, default=defaults.get("batch_size", 64), help="Batch size per client")
+    parser.add_argument("--seed", type=int, default=defaults.get("seed", 42), help="Random seed for partitioning")
     parser.add_argument(
         "--distribution",
         type=str,
-        default="iid",
+        default=defaults.get("distribution", "iid"),
         choices=DISTRIBUTIONS,
         help="Client data distribution mode (use --list_capabilities for mode descriptions)",
     )
     parser.add_argument(
         "--dirichlet_alpha",
         type=float,
-        default=0.5,
+        default=defaults.get("dirichlet_alpha", 0.5),
         help="Dirichlet concentration (used when --distribution dirichlet)",
     )
     parser.add_argument(
         "--label_skew_classes",
         type=int,
-        default=2,
+        default=defaults.get("label_skew_classes", 2),
         help="Classes per client (used when --distribution label_skew/pathological)",
     )
     parser.add_argument(
         "--shard_num_shards_per_partition",
         type=int,
-        default=2,
+        default=defaults.get("shard_num_shards_per_partition", 2),
         help="Number of shards per partition (used when --distribution shard)",
     )
     parser.add_argument(
         "--inner_dirichlet_alpha",
         type=float,
-        default=0.5,
+        default=defaults.get("inner_dirichlet_alpha", 0.5),
         help="Inner Dirichlet concentration (used when --distribution inner_dirichlet)",
     )
     parser.add_argument(
         "--size_partition_weights",
         type=str,
-        default="",
+        default=defaults.get("size_partition_weights", ""),
         help="Comma-separated partition weights (used when --distribution size/inner_dirichlet)",
     )
     parser.add_argument(
         "--distribution_matrix_json",
         type=str,
-        default="",
+        default=defaults.get("distribution_matrix_json", ""),
         help="Path to JSON matrix [num_partitions][num_classes] (used when --distribution distribution)",
     )
 
-    parser.add_argument("--num_rounds", type=int, default=10, help="Total number of federated rounds")
-    parser.add_argument("--num_partitions", type=int, default=10, help="Number of simulated clients")
+    parser.add_argument("--num_rounds", type=int, default=defaults.get("num_rounds", 10), help="Total number of federated rounds")
+    parser.add_argument("--num_partitions", type=int, default=defaults.get("num_partitions", 10), help="Number of simulated clients")
     parser.add_argument(
         "--fraction_fit",
         type=float,
-        default=0.25,
+        default=defaults.get("fraction_fit", 0.25),
         help="Fraction of clients used for training each round",
     )
     parser.add_argument(
         "--min_fit_clients",
         type=int,
-        default=3,
+        default=defaults.get("min_fit_clients", 3),
         help="Minimum number of clients to sample for training",
     )
     parser.add_argument(
         "--min_evaluate_clients",
         type=int,
-        default=3,
+        default=defaults.get("min_evaluate_clients", 3),
         help="Minimum number of clients to sample for evaluation",
     )
-    parser.add_argument("--client_cpu", type=int, default=1, help="CPUs per client for simulation backend")
-    parser.add_argument("--client_gpu", type=float, default=0.01, help="GPU fraction per client for simulation backend")
-    parser.add_argument("--local_epochs", type=int, default=5, help="Local training epochs on each selected client")
-    parser.add_argument("--lr", type=float, default=0.01, help="Client optimizer learning rate")
-    parser.add_argument("--momentum", type=float, default=0.9, help="Client optimizer momentum")
-    parser.add_argument("--csv_log_dir", type=str, default="results/logs", help="Directory for CSV logs")
-    parser.add_argument("--wandb_dir", type=str, default="results/wandb", help="Directory for Weights & Biases logs")
-    parser.add_argument("--wandb_project", type=str, default="flower-federated", help="Weights & Biases project name")
+    parser.add_argument("--client_cpu", type=int, default=defaults.get("client_cpu", 1), help="CPUs per client for simulation backend")
+    parser.add_argument("--client_gpu", type=float, default=defaults.get("client_gpu", 0.01), help="GPU fraction per client for simulation backend")
+    parser.add_argument("--local_epochs", type=int, default=defaults.get("local_epochs", 5), help="Local training epochs on each selected client")
+    parser.add_argument("--lr", type=float, default=defaults.get("lr", 0.01), help="Client optimizer learning rate")
+    parser.add_argument("--momentum", type=float, default=defaults.get("momentum", 0.9), help="Client optimizer momentum")
+    parser.add_argument("--csv_log_dir", type=str, default=defaults.get("csv_log_dir", "results/logs"), help="Directory for CSV logs")
+    parser.add_argument("--wandb_dir", type=str, default=defaults.get("wandb_dir", "results/wandb"), help="Directory for Weights & Biases logs")
+    parser.add_argument("--wandb_project", type=str, default=defaults.get("wandb_project", "flower-federated"), help="Weights & Biases project name")
     parser.add_argument(
         "--wandb_run_name",
         type=str,
-        default="auto",
+        default=defaults.get("wandb_run_name", "auto"),
         help="Weights & Biases run name. Use 'auto' to name by dataset/rounds/clients/batch/fraction_fit.",
     )
-    parser.add_argument("--disable_wandb", action="store_true", help="Disable Weights & Biases logging")
+    parser.add_argument("--disable_wandb", action="store_true", default=defaults.get("disable_wandb", False), help="Disable Weights & Biases logging")
     parser.add_argument("--dry_run", action="store_true", help="Print resolved config and exit without running")
     return parser
 
@@ -283,4 +285,3 @@ def _to_serializable_config(args: argparse.Namespace) -> dict:
     cfg = vars(args).copy()
     cfg["model_builder"] = args.model
     return cfg
-

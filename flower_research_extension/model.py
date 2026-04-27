@@ -1,12 +1,11 @@
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-
 from collections import OrderedDict
 from typing import List
 
 import numpy as np
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
 class Net(nn.Module):
     def __init__(self, num_classes: int, in_channels: int = 3) -> None:

@@ -8,10 +8,13 @@ Usage:
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import sys
 from pathlib import Path
+
+import yaml
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -55,8 +58,47 @@ __all__ = [
     "_validate_args",
     "build_parser",
     "get_model_builder",
+    "parse_args",
     "main",
 ]
+
+
+def _load_config(path: str | None) -> dict:
+    if not path:
+        return {}
+
+    config_path = Path(path)
+    if not config_path.exists():
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+
+    with config_path.open("r", encoding="utf-8") as handle:
+        loaded = yaml.safe_load(handle) or {}
+
+    if not isinstance(loaded, dict):
+        raise ValueError(f"Config file must contain a mapping at the top level: {config_path}")
+
+    return loaded
+
+
+def parse_args(argv: list[str] | None = None):
+    bootstrap = argparse.ArgumentParser(add_help=False)
+    bootstrap.add_argument("--config", type=str)
+    bootstrap_args, _ = bootstrap.parse_known_args(argv)
+    defaults = _load_config(bootstrap_args.config)
+
+    parser = build_parser(defaults)
+    known_dests = {action.dest for action in parser._actions}
+    unknown_keys = sorted(set(defaults) - known_dests)
+    if unknown_keys:
+        raise ValueError(f"Unknown config keys: {', '.join(unknown_keys)}")
+
+    args = parser.parse_args(argv)
+    if not args.list_capabilities:
+        _validate_args(parser, args)
+        args = _normalize_args(args)
+
+    args.config_values = defaults
+    return args
 
 
 def _prepare_simulation_runtime(args) -> None:
@@ -77,15 +119,11 @@ def _prepare_simulation_runtime(args) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
+    args = parse_args(argv)
 
     if args.list_capabilities:
         print(json.dumps(_capabilities(), indent=2, sort_keys=True))
         return 0
-
-    _validate_args(parser, args)
-    args = _normalize_args(args)
 
     if args.dry_run:
         print(json.dumps(_to_serializable_config(args), indent=2, sort_keys=True))

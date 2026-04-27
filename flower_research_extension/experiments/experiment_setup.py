@@ -24,7 +24,7 @@ from flower_research_extension.data_files import REGISTRY as DATASETS
 from flower_research_extension.utils.reproducibility import seed_everything
 
 # Use your original fit_config, and the new provider-aware evaluate
-from flower_research_extension.training import evaluate_with_provider
+from flower_research_extension.training import make_fit_config_fn, evaluate_with_provider
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +55,7 @@ def _make_csv_logger(path: str):
         return _Noop()
 
 
-def _make_wandb_logger(args):
+def _make_wandb_logger(args) -> MetricsPlugin | None:
     if getattr(args, "disable_wandb", False):
         return None
     try:
@@ -69,7 +69,6 @@ def _make_wandb_logger(args):
     except Exception:
         logger.exception("Failed to initialize W&B logger; continuing without W&B")
         return None
-
 
 def suppress_warnings():
     warnings.filterwarnings("ignore", category=UserWarning, module="datasets")
@@ -105,18 +104,6 @@ def aggregate_evaluate_metrics(metrics: List[Tuple[int, Dict]]) -> Dict:
 
 def _on_evaluate_config(server_round: int) -> Dict:
     return {"server_round": server_round}
-
-
-def _make_fit_config_fn(*, local_epochs: int, lr: float, momentum: float):
-    def _fit_config(server_round: int) -> Dict:
-        return {
-            "server_round": server_round,
-            "local_epochs": local_epochs,
-            "lr": lr,
-            "momentum": momentum,
-        }
-
-    return _fit_config
 
 
 def _evaluate_fn_factory(
@@ -263,6 +250,11 @@ def build_experiment(args):
     plugins.append(csv_logger)
 
     min_avail = max(args.min_fit_clients, args.min_evaluate_clients)
+    fit_config_fn = make_fit_config_fn(
+        local_epochs=getattr(args, "local_epochs", 5),
+        lr=getattr(args, "lr", 0.01),
+        momentum=getattr(args, "momentum", 0.9),
+    )
 
     base = FedAvg(
         fraction_fit=args.fraction_fit,
@@ -270,11 +262,7 @@ def build_experiment(args):
         min_evaluate_clients=args.min_evaluate_clients,
         min_available_clients=min_avail,
         initial_parameters=init_params,
-        on_fit_config_fn=_make_fit_config_fn(
-            local_epochs=int(getattr(args, "local_epochs", 5)),
-            lr=float(getattr(args, "lr", 0.01)),
-            momentum=float(getattr(args, "momentum", 0.9)),
-        ),
+        on_fit_config_fn=fit_config_fn,
         on_evaluate_config_fn=_on_evaluate_config,
         evaluate_fn=_evaluate_fn_factory(
             device=device,

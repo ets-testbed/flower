@@ -36,4 +36,3 @@ python -m pip install -e "$EXT_ROOT"
 echo "Setup complete."
 echo "Activate with: source $VENV_DIR/bin/activate"
 echo "Run with: python -m flower_research_extension.experiments.run_experiment"
-

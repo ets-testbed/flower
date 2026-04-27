@@ -27,11 +27,26 @@ def _build_model(
         return model_builder(num_classes)
     return Net(num_classes=num_classes)
 
+
+def make_fit_config_fn(
+    *,
+    local_epochs: int = 5,
+    lr: float = 0.01,
+    momentum: float = 0.9,
+) -> Callable[[int], Dict]:
+    def fit_config(server_round: int) -> Dict:
+        return {
+            "server_round": server_round,
+            "local_epochs": int(local_epochs),
+            "lr": float(lr),
+            "momentum": float(momentum),
+        }
+
+    return fit_config
+
+
 def fit_config(server_round: int) -> Dict:
-    return {
-        "server_round": server_round,
-        "local_epochs": 5,
-    }
+    return make_fit_config_fn()(server_round)
 
 
 def _iter_batches(dl: DataLoader):
@@ -113,4 +128,3 @@ def evaluate_with_provider(
     _, _, testloader = provider.partition(Path(dataset_root), spec)
 
     return _compute_classification_metrics(model, testloader, device)
-
